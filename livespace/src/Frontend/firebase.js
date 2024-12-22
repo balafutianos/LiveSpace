@@ -1,10 +1,9 @@
-// Import the functions you need from the SDKs you need
+// Import Firebase modules
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
 import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// Your Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyAUXJ-wy4dZjBzCJnFARKmiRO57S7cfKqA",
   authDomain: "livespacezone.firebaseapp.com",
@@ -12,12 +11,15 @@ const firebaseConfig = {
   storageBucket: "livespacezone.firebasestorage.app",
   messagingSenderId: "456717202137",
   appId: "1:456717202137:web:f2b8313a77ae9f162404c8",
-  measurementId: "G-2P1KENBCP0"
+  measurementId: "G-2P1KENBCP0",
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-const auth = getAuth(app);
 
-export { app, auth };
+// Initialize Firebase services
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// Export services
+export { app, auth, db };
