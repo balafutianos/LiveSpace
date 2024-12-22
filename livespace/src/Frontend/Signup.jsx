@@ -5,20 +5,19 @@ import React from "react";
 
 function Signup() {
   return (
-    <div className="App">
-      {/* <Navbar /> */}
-      <div className="container">
-        <h1>
-          Website
-          <br />
-          Coming Soon!
-        </h1>
+    <div className='signup-container'>
+      <form className='signup-form'>
+        <h2>Sign Up</h2>
+        <label htmlFor="">
+            Email:
+            <input type="text" />
+        </label>
+        <label htmlFor="">
+            Password:
+            <input type="text" />
+        </label>
 
-        <h1>
-          <strong>Paxyn </strong> 
-        </h1>
-       
-      </div>
+      </form>
     </div>
   );
 }
