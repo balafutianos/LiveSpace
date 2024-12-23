@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { auth, db } from "./firebase";
 import { setDoc, doc } from "firebase/firestore";
 import { toast } from "react-toastify";
+import "./Signup.css"; // Add a CSS file for additional styling
 
 function Signup() {
   const [email, setEmail] = useState("");
@@ -15,21 +16,18 @@ function Signup() {
     try {
       await createUserWithEmailAndPassword(auth, email, password);
       const user = auth.currentUser;
-      console.log(user);
       if (user) {
         await setDoc(doc(db, "Users", user.uid), {
           email: user.email,
           firstName: fname,
           lastName: lname,
-          photo:""
+          photo: "",
         });
       }
-      console.log("User Registered Successfully!!");
       toast.success("User Registered Successfully!!", {
         position: "top-center",
       });
     } catch (error) {
-      console.log(error.message);
       toast.error(error.message, {
         position: "bottom-center",
       });
@@ -37,61 +35,62 @@ function Signup() {
   };
 
   return (
-    <form onSubmit={handleRegister}>
-      <h3>Sign Up</h3>
+    <div className="signup-page">
+      <div className="signup-container">
+        <div className="signup-header">
+          <h1>Livespace</h1>
+          <p>Get connected with your friend circle online for free!</p>
+        </div>
+        <form className="signup-form" onSubmit={handleRegister}>
+          <h2>Create new account</h2>
+          {/* <p>It’s free and always will be.</p> */}
 
-      <div className="mb-3">
-        <label>First name</label>
-        <input
-          type="text"
-          className="form-control"
-          placeholder="First name"
-          onChange={(e) => setFname(e.target.value)}
-          required
-        />
-      </div>
+          <div className="form-group">
+            <input
+              type="text"
+              placeholder="First name"
+              onChange={(e) => setFname(e.target.value)}
+              required
+            />
+            <input
+              type="text"
+              placeholder="Last name"
+              onChange={(e) => setLname(e.target.value)}
+            />
+          </div>
 
-      <div className="mb-3">
-        <label>Last name</label>
-        <input
-          type="text"
-          className="form-control"
-          placeholder="Last name"
-          onChange={(e) => setLname(e.target.value)}
-        />
-      </div>
+          <div className="form-group">
+            <input
+              type="password"
+              placeholder="New password"
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
 
-      <div className="mb-3">
-        <label>Email address</label>
+          <div className="form-group">
+        
         <input
           type="email"
-          className="form-control"
+          
           placeholder="Enter email"
           onChange={(e) => setEmail(e.target.value)}
           required
         />
       </div>
+         
 
-      <div className="mb-3">
-        <label>Password</label>
-        <input
-          type="password"
-          className="form-control"
-          placeholder="Enter password"
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-      </div>
+          <button type="submit" className="signup-button">
+            Sign Up
+          </button>
 
-      <div className="d-grid">
-        <button type="submit" className="btn btn-primary">
-          Sign Up
-        </button>
+          <p className="forgot-password">
+            Already registered? <a href="/Login">Log In</a>
+          </p>
+        </form>
       </div>
-      <p className="forgot-password text-right">
-        Already registered <a href="/login">Login</a>
-      </p>
-    </form>
+    </div>
   );
 }
+
 export default Signup;

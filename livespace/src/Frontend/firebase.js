@@ -19,7 +19,7 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Firebase services
 const auth = getAuth(app);
-const db = getFirestore(app);
+const db = getFirestore(app); // Declare `db` only once
 
 // Export services
 export { app, auth, db };
