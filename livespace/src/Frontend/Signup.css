@@ -7,17 +7,16 @@ body {
   }
   
   .signup-page {
-    display: flex
-;
-    justify-content: flex-end;
     align-items: center;
+    background-attachment: fixed;
+    background-color: #16202A;
+    background-position: 50%;
+    background-repeat: no-repeat;
+    background-size: cover;
+    display: flex;
+    justify-content: flex-end;
     min-height: 100vh;
     padding-right: 20px;
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    background-attachment: fixed;
-    background-image: url(./2148211890.jpg);
 }
   
   .signup-container {
@@ -29,13 +28,11 @@ body {
   }
   
   .signup-header h1 {
+    color: #5fdc34;
     font-size: 36px;
-    color: rgba(1, 55, 14, 0.793);
-    font-weight: bold;
+    font-weight: 700;
     margin-bottom: 10px;
-    
-    
-  }
+}
   
   .signup-header p {
     font-size: 16px;
@@ -109,14 +106,12 @@ body {
     line-height: 1.5;
 }
   /* Navbar styles */
-.navbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background-color: #16113A;
-  padding: 20px 20px;
-  color: #10D154;
-  box-shadow: 0 14px 12px rgba(0, 0, 0, 0.356);
+  .navbar {
+    background-color: #1C2939;
+    box-shadow: 0 14px 12px rgba(0, 0, 0, .356);
+    color: #5fdc34;
+    justify-content: space-between;
+    padding: 20px;
 }
 
 .navbar-container {
@@ -145,13 +140,14 @@ body {
 }
 
 .login-button {
-  padding: 7px 10px;
-  background: linear-gradient(15deg, #10D154, #10D154);
-  color: #16113a;
+  background: linear-gradient(15deg, #10d154, #10d154);
   border: none;
   border-radius: 4px;
+  color: #16113a;
   cursor: pointer;
+  padding: 7px 10px;
 }
+
 
 .login-button:hover {
   background-color: #155db3;
