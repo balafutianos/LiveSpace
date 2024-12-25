@@ -1,0 +1,154 @@
+body {
+    font-family: 'Lucida Grande', Tahoma, Verdana, Arial, sans-serif;
+    background-color: #acacac;
+    margin: 0;
+    padding: 0;
+ 
+  }
+  
+  .signup-page {
+    align-items: center;
+    background-attachment: fixed;
+    background-color: #16202A;
+    background-position: 50%;
+    background-repeat: no-repeat;
+    background-size: cover;
+    display: flex;
+    justify-content: flex-end;
+    min-height: 100vh;
+    padding-right: 20px;
+}
+  
+  .signup-container {
+    background-color: #FCFCFE;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    width: 400px;
+  }
+  
+  .signup-header h1 {
+    color: #5fdc34;
+    font-size: 36px;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+  
+  .signup-header p {
+    font-size: 16px;
+    color: #606770;
+    margin-bottom: 20px;
+  }
+  
+  .signup-form {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .signup-form h2 {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 10px;
+  }
+  
+  .form-group {
+    margin-bottom: 15px;
+  }
+  
+  .form-group input,
+  .form-group select {
+    width: 80%;
+    padding: 10px;
+    border: 1px solid #ccd0d5;
+    border-radius: 14px;
+    font-size: 13px;
+  }
+  
+  .signup-button {
+    width: 100%;
+    padding: 10px;
+    background-color: #073B;
+    color: #fff;
+    font-size: 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  
+  .signup-button:hover {
+    background-color: #07702e;
+  }
+  
+  .forgot-password {
+    margin-top: 10px;
+    text-align: center;
+  }
+  
+  .forgot-password a {
+    color: #07702e;
+    text-decoration: none;
+  }
+  
+  .forgot-password a:hover {
+    text-decoration: underline;
+  }
+  
+  .motto-section {
+    position: absolute;
+    left: 50px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 40%;
+    color: #fcfcfe;
+    text-align: left;
+    font-size: 2rem;
+    font-weight: bold;
+    line-height: 1.5;
+}
+  /* Navbar styles */
+  .navbar {
+    background-color: #1C2939;
+    box-shadow: 0 14px 12px rgba(0, 0, 0, .356);
+    color: #5fdc34;
+    justify-content: space-between;
+    padding: 20px;
+}
+
+.navbar-container {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.navbar h1 {
+  font-size: 44px;
+  font-weight: bold;
+  margin: 0;
+  font-style:inherit;
+}
+
+.login-form {
+  display: flex;
+  gap: 30px;
+}
+
+.login-form input {
+  padding: 10px;
+  border-radius: 4px;
+  border: 1px solid #ccd0d5;
+  font-size: 14px;
+}
+
+.login-button {
+  background: linear-gradient(15deg, #10d154, #10d154);
+  border: none;
+  border-radius: 4px;
+  color: #16113a;
+  cursor: pointer;
+  padding: 7px 10px;
+}
+
+
+.login-button:hover {
+  background-color: #155db3;
+}
