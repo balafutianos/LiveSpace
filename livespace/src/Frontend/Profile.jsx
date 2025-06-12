@@ -1,52 +1,45 @@
-// Profile.jsx
 import React, { useEffect, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "./firebase";
 import { doc, getDoc } from "firebase/firestore";
-import { useNavigate } from "react-router-dom"; // optional if using React Router
-import "./Profile.css"; // Optional: styling
+import { useNavigate } from "react-router-dom";
 
 function Profile() {
   const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchUserData = async () => {
-      const user = auth.currentUser;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        navigate("/"); // Redirect to login if not logged in
+        navigate("/login");
         return;
       }
 
-      const userDocRef = doc(db, "Users", user.uid);
-      const userDocSnap = await getDoc(userDocRef);
-
-      if (userDocSnap.exists()) {
-        setUserData(userDocSnap.data());
-      } else {
-        console.error("No such user document!");
+      const userDoc = await getDoc(doc(db, "Users", user.uid));
+      if (userDoc.exists()) {
+        setUserData(userDoc.data());
       }
-    };
+      setLoading(false);
+    });
 
-    fetchUserData();
+    return () => unsubscribe(); // Clean up listener
   }, [navigate]);
 
-  if (!userData) return <div>Loading...</div>;
+  if (loading) return <div>Loading...</div>;
 
   return (
-    <div className="profile-container">
-      <h1>Your Profile</h1>
-      <div className="profile-card">
-        <img
-          src={
-            userData.photo ||
-            "https://via.placeholder.com/150?text=No+Photo"
-          }
-          alt="Profile"
-          className="profile-pic"
-        />
-        <p><strong>Name:</strong> {userData.firstName} {userData.lastName}</p>
-        <p><strong>Email:</strong> {userData.email}</p>
-      </div>
+    <div>
+      <h1>Welcome to your profile!</h1>
+      <img
+        src={
+          userData?.photo || "https://via.placeholder.com/150?text=No+Photo"
+        }
+        alt="Profile"
+        style={{ width: "150px", borderRadius: "50%" }}
+      />
+      <p>Name: {userData?.firstName} {userData?.lastName}</p>
+      <p>Email: {userData?.email}</p>
     </div>
   );
 }
