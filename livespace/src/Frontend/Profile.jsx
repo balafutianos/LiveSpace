@@ -1,51 +1,72 @@
-// Profile.jsx
 import React, { useEffect, useState } from "react";
-import { auth, db } from "./firebase";
-import { doc, getDoc } from "firebase/firestore";
-import { useNavigate } from "react-router-dom"; // optional if using React Router
-import "./Profile.css"; // Optional: styling
+import { onAuthStateChanged } from "firebase/auth";
+import { auth, db, storage } from "./firebase";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { useNavigate } from "react-router-dom";
 
 function Profile() {
   const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedImage, setSelectedImage] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchUserData = async () => {
-      const user = auth.currentUser;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        navigate("/"); // Redirect to login if not logged in
+        navigate("/login");
         return;
       }
 
-      const userDocRef = doc(db, "Users", user.uid);
-      const userDocSnap = await getDoc(userDocRef);
-
-      if (userDocSnap.exists()) {
-        setUserData(userDocSnap.data());
-      } else {
-        console.error("No such user document!");
+      const userDoc = await getDoc(doc(db, "Users", user.uid));
+      if (userDoc.exists()) {
+        setUserData(userDoc.data());
       }
-    };
+      setLoading(false);
+    });
 
-    fetchUserData();
+    return () => unsubscribe();
   }, [navigate]);
 
-  if (!userData) return <div>Loading...</div>;
+  const handleImageChange = (e) => {
+    if (e.target.files[0]) {
+      setSelectedImage(e.target.files[0]);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedImage || !auth.currentUser) return;
+
+    const imageRef = ref(storage, `profilePictures/${auth.currentUser.uid}`);
+    await uploadBytes(imageRef, selectedImage);
+    const downloadURL = await getDownloadURL(imageRef);
+
+    await updateDoc(doc(db, "Users", auth.currentUser.uid), {
+      photo: downloadURL,
+    });
+
+    setUserData((prev) => ({ ...prev, photo: downloadURL }));
+    setSelectedImage(null);
+  };
+
+  if (loading) return <div>Loading...</div>;
 
   return (
-    <div className="profile-container">
-      <h1>Your Profile</h1>
-      <div className="profile-card">
-        <img
-          src={
-            userData.photo ||
-            "https://via.placeholder.com/150?text=No+Photo"
-          }
-          alt="Profile"
-          className="profile-pic"
-        />
-        <p><strong>Name:</strong> {userData.firstName} {userData.lastName}</p>
-        <p><strong>Email:</strong> {userData.email}</p>
+    <div>
+      <h1>Welcome to your profile!</h1>
+      <img
+        src={
+          userData?.photo || "https://via.placeholder.com/150?text=No+Photo"
+        }
+        alt="Profile"
+        style={{ width: "150px", borderRadius: "50%" }}
+      />
+      <p>Name: {userData?.firstName} {userData?.lastName}</p>
+      <p>Email: {userData?.email}</p>
+
+      <div style={{ marginTop: "20px" }}>
+        <input type="file" onChange={handleImageChange} />
+        <button onClick={handleUpload}>Upload Profile Picture</button>
       </div>
     </div>
   );
