@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 function Profile() {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selectedImage, setSelectedImage] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -17,33 +18,35 @@ function Profile() {
         return;
       }
 
-      const userDocRef = doc(db, "Users", user.uid);
-      const userDoc = await getDoc(userDocRef);
+      const userDoc = await getDoc(doc(db, "Users", user.uid));
       if (userDoc.exists()) {
-        setUserData({ ...userDoc.data(), uid: user.uid });
+        setUserData(userDoc.data());
       }
       setLoading(false);
     });
 
-    return () => unsubscribe(); // Clean up listener
+    return () => unsubscribe();
   }, [navigate]);
 
-  const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !userData) return;
+  const handleImageChange = (e) => {
+    if (e.target.files[0]) {
+      setSelectedImage(e.target.files[0]);
+    }
+  };
 
-    const storageRef = ref(storage, `profilePics/${userData.uid}`);
-    await uploadBytes(storageRef, file);
+  const handleUpload = async () => {
+    if (!selectedImage || !auth.currentUser) return;
 
-    const photoURL = await getDownloadURL(storageRef);
+    const imageRef = ref(storage, `profilePictures/${auth.currentUser.uid}`);
+    await uploadBytes(imageRef, selectedImage);
+    const downloadURL = await getDownloadURL(imageRef);
 
-    // Update Firestore
-    await updateDoc(doc(db, "Users", userData.uid), {
-      photo: photoURL,
+    await updateDoc(doc(db, "Users", auth.currentUser.uid), {
+      photo: downloadURL,
     });
 
-    // Update UI
-    setUserData((prev) => ({ ...prev, photo: photoURL }));
+    setUserData((prev) => ({ ...prev, photo: downloadURL }));
+    setSelectedImage(null);
   };
 
   if (loading) return <div>Loading...</div>;
@@ -52,15 +55,19 @@ function Profile() {
     <div>
       <h1>Welcome to your profile!</h1>
       <img
-        src={userData?.photo || "https://via.placeholder.com/150?text=No+Photo"}
+        src={
+          userData?.photo || "https://via.placeholder.com/150?text=No+Photo"
+        }
         alt="Profile"
         style={{ width: "150px", borderRadius: "50%" }}
       />
-      <div>
-        <input type="file" accept="image/*" onChange={handleImageUpload} />
-      </div>
       <p>Name: {userData?.firstName} {userData?.lastName}</p>
       <p>Email: {userData?.email}</p>
+
+      <div style={{ marginTop: "20px" }}>
+        <input type="file" onChange={handleImageChange} />
+        <button onClick={handleUpload}>Upload Profile Picture</button>
+      </div>
     </div>
   );
 }
