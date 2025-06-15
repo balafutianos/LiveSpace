@@ -9,7 +9,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyAUXJ-wy4dZjBzCJnFARKmiRO57S7cfKqA",
   authDomain: "livespacezone.firebaseapp.com",
   projectId: "livespacezone",
-  storageBucket: "livespacezone.appspot.com", // ✅ Fix this line (correct domain!)
+  storageBucket: "livespacezone.firebasestorage.app", // ✅ Fix this line (correct domain!)
   messagingSenderId: "456717202137",
   appId: "1:456717202137:web:f2b8313a77ae9f162404c8",
   measurementId: "G-2P1KENBCP0",
