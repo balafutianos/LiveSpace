@@ -5,6 +5,10 @@ import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate } from "react-router-dom";
 
+const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
+const FIREBASE_DEFAULT_IMAGE =
+  "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
+
 function Profile() {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -20,8 +24,17 @@ function Profile() {
 
       const userDoc = await getDoc(doc(db, "Users", user.uid));
       if (userDoc.exists()) {
-        setUserData(userDoc.data());
+        const data = userDoc.data();
+
+        // Replace Firebase's default photo with your own fallback
+        const photo =
+          !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+            ? FALLBACK_IMAGE
+            : data.photo;
+
+        setUserData({ ...data, photo });
       }
+
       setLoading(false);
     });
 
@@ -55,13 +68,13 @@ function Profile() {
     <div>
       <h1>Welcome to your profile!</h1>
       <img
-        src={
-          userData?.photo || "https://via.placeholder.com/150?text=No+Photo"
-        }
+        src={userData?.photo}
         alt="Profile"
         style={{ width: "150px", borderRadius: "50%" }}
       />
-      <p>Name: {userData?.firstName} {userData?.lastName}</p>
+      <p>
+        Name: {userData?.firstName} {userData?.lastName}
+      </p>
       <p>Email: {userData?.email}</p>
 
       <div style={{ marginTop: "20px" }}>
