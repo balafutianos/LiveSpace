@@ -152,3 +152,79 @@ body {
 .login-button:hover {
   background-color: #155db3;
 }
+@media (max-width: 768px) {
+  .signup-page {
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 20px 10px;
+  }
+
+  .motto-section {
+    position: static;
+    transform: none;
+    width: 100%;
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 1.4rem;
+    padding: 0 10px;
+  }
+
+  .signup-container {
+    width: 100%;
+    max-width: 350px;
+    box-shadow: none;
+    padding: 15px;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .form-group input {
+    width: 100%;
+  }
+
+  .signup-header h1 {
+    font-size: 28px;
+    text-align: center;
+  }
+
+  .signup-header p {
+    text-align: center;
+    font-size: 14px;
+  }
+
+  .forgot-password {
+    font-size: 14px;
+  }
+
+  .navbar {
+    flex-direction: column;
+    padding: 10px 15px;
+    text-align: center;
+  }
+
+  .navbar-container {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .login-form {
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .login-form input,
+  .login-button {
+    width: 100%;
+  }
+
+  .navbar h1 {
+    font-size: 32px;
+  }
+}
