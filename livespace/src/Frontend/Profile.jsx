@@ -1,7 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db, storage } from "./firebase";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  updateDoc,
+  collection,
+  getDocs,
+  query,
+  where
+} from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate } from "react-router-dom";
 
@@ -13,6 +21,8 @@ function Profile() {
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -62,10 +72,36 @@ function Profile() {
     setSelectedImage(null);
   };
 
+  const handleSearch = async () => {
+    if (!searchTerm.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const usersRef = collection(db, "Users");
+
+    // Search by email exactly
+    const q = query(usersRef, where("email", "==", searchTerm.trim()));
+
+    const querySnapshot = await getDocs(q);
+    const results = [];
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      const photo =
+        !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+          ? FALLBACK_IMAGE
+          : data.photo;
+      results.push({ id: doc.id, ...data, photo });
+    });
+
+    setSearchResults(results);
+  };
+
   if (loading) return <div>Loading...</div>;
 
   return (
-    <div>
+    <div style={{ padding: "20px" }}>
       <h1>Welcome to your profile!</h1>
       <img
         src={userData?.photo}
@@ -81,8 +117,40 @@ function Profile() {
         <input type="file" onChange={handleImageChange} />
         <button onClick={handleUpload}>Upload Profile Picture</button>
       </div>
+
+      <div style={{ marginTop: "40px" }}>
+        <h2>Search Users by Email</h2>
+        <input
+          type="text"
+          placeholder="Enter email (e.g. tasosanas2002@gmail.com)"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        <button onClick={handleSearch} style={{ marginLeft: "10px" }}>
+          Search
+        </button>
+
+        <div style={{ marginTop: "20px" }}>
+          {searchResults.length === 0 && searchTerm && (
+            <p>No users found with that email.</p>
+          )}
+          {searchResults.map((user) => (
+            <div key={user.id} style={{ marginTop: "15px", display: "flex", alignItems: "center" }}>
+              <img
+                src={user.photo}
+                alt="User"
+                style={{ width: "50px", borderRadius: "50%" }}
+              />
+              <div style={{ marginLeft: "10px" }}>
+                <strong>{user.firstName} {user.lastName}</strong><br />
+                <small>{user.email}</small>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
-
+// 
 export default Profile;
