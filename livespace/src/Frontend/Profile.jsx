@@ -1,12 +1,6 @@
 import React, { useEffect, useState } from "react";
-import {
-  onAuthStateChanged
-} from "firebase/auth";
-import {
-  auth,
-  db,
-  storage
-} from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth, db, storage } from "./firebase";
 import {
   doc,
   getDoc,
@@ -16,11 +10,7 @@ import {
   query,
   where
 } from "firebase/firestore";
-import {
-  ref,
-  uploadBytes,
-  getDownloadURL
-} from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate } from "react-router-dom";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
@@ -45,10 +35,13 @@ function Profile() {
       const userDoc = await getDoc(doc(db, "Users", user.uid));
       if (userDoc.exists()) {
         const data = userDoc.data();
+
+        // Replace Firebase's default photo with your own fallback
         const photo =
           !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
             ? FALLBACK_IMAGE
             : data.photo;
+
         setUserData({ ...data, photo });
       }
 
