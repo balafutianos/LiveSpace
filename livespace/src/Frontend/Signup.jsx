@@ -22,7 +22,8 @@ function Signup() {
           email: user.email,
           firstName: fname,
           lastName: lname,
-          photo: "",
+          photo: "https://i.imgur.com/qzsiOuh.png",
+
         });
       }
       toast.success("User Registered Successfully!!", {
