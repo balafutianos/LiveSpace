@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db, storage } from "./firebase";
+import { deleteDoc, doc as firestoreDoc } from "firebase/firestore";
+
 import {
   doc,
   getDoc,
@@ -90,6 +92,17 @@ function Profile() {
     }
   };
 
+  const handleDeletePost = async (postId) => {
+  try {
+    await deleteDoc(firestoreDoc(db, "Posts", postId));
+    setPosts((prev) => prev.filter((p) => p.id !== postId));
+    console.log("🗑️ Post deleted:", postId);
+  } catch (error) {
+    console.error("❌ Error deleting post:", error);
+  }
+};
+
+
   // Upload cover photo
   const handleUploadCover = async (file) => {
     if (!file || !auth.currentUser) return;
@@ -134,23 +147,26 @@ function Profile() {
 
   // Fetch posts
   const fetchPosts = async (uid) => {
-    if (!uid) return;
-    try {
-      const q = query(
-        collection(db, "Posts"),
-        where("userId", "==", uid),
-        orderBy("createdAt", "desc")
-      );
-      const snapshot = await getDocs(q);
-      const userPosts = snapshot.docs.map((doc) => ({
+  if (!uid) return;
+  try {
+    const q = query(
+      collection(db, "Posts"),
+      where("userId", "==", uid),
+      orderBy("createdAt", "desc")
+    );
+    const snapshot = await getDocs(q);
+    const userPosts = snapshot.docs
+      .map((doc) => ({
         id: doc.id,
         ...doc.data()
-      }));
-      setPosts(userPosts);
-    } catch (error) {
-      console.error("❌ Error fetching posts:", error);
-    }
-  };
+      }))
+      .filter((post) => post.text || post.image); // filter out empty posts
+    setPosts(userPosts);
+  } catch (error) {
+    console.error("❌ Error fetching posts:", error);
+  }
+};
+
 
   // Search
   const handleSearch = async () => {
