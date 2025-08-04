@@ -15,7 +15,7 @@ function Navbar({ searchTerm, setSearchTerm, handleSearch }) {
       <div>
         <input
           type="text"
-          placeholder="Search by email..."
+          placeholder="Search People"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           style={{
