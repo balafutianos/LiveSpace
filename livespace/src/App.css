@@ -1,6 +1,10 @@
 .App {
   text-align: center;
 }
+.cover-overlay:hover,
+.profile-overlay:hover {
+  opacity: 1;
+}
 
 .App-logo {
   height: 40vmin;
