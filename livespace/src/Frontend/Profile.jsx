@@ -7,8 +7,10 @@ import {
   updateDoc,
   collection,
   getDocs,
+  addDoc,
   query,
-  where
+  where,
+  orderBy
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate } from "react-router-dom";
@@ -25,48 +27,129 @@ function Profile() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState([]);
+  const [postText, setPostText] = useState("");
+  const [postImage, setPostImage] = useState(null);
+  const [posts, setPosts] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
+        console.log("User not authenticated, redirecting to login");
         navigate("/login");
         return;
       }
-      const userDoc = await getDoc(doc(db, "Users", user.uid));
-      if (userDoc.exists()) {
-        const data = userDoc.data();
-        const photo =
-          !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-            ? FALLBACK_IMAGE
-            : data.photo;
-        const cover =
-          !data.coverPhoto || data.coverPhoto === "" ? DEFAULT_COVER : data.coverPhoto;
-        setUserData({ ...data, photo });
-        setCoverPhoto(cover);
+
+      console.log("Authenticated user:", user.uid);
+      try {
+        const userDocRef = doc(db, "Users", user.uid);
+        const userDoc = await getDoc(userDocRef);
+
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          console.log("User data fetched:", data);
+
+          const photo =
+            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+              ? FALLBACK_IMAGE
+              : data.photo;
+
+          const cover =
+            !data.coverPhoto || data.coverPhoto === "" ? DEFAULT_COVER : data.coverPhoto;
+
+          setUserData({ ...data, photo });
+          setCoverPhoto(cover);
+
+          await fetchPosts(user.uid);
+        } else {
+          console.warn("⚠️ User document does not exist!");
+          setUserData(null);
+        }
+      } catch (error) {
+        console.error("🔥 Error fetching user data:", error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
+
     return () => unsubscribe();
   }, [navigate]);
 
-  // Upload handlers
+  // Upload profile picture
   const handleUploadProfile = async (file) => {
     if (!file || !auth.currentUser) return;
-    const imageRef = ref(storage, `profilePictures/${auth.currentUser.uid}`);
-    await uploadBytes(imageRef, file);
-    const downloadURL = await getDownloadURL(imageRef);
-    await updateDoc(doc(db, "Users", auth.currentUser.uid), { photo: downloadURL });
-    setUserData((prev) => ({ ...prev, photo: downloadURL }));
+    try {
+      const imageRef = ref(storage, `profilePictures/${auth.currentUser.uid}`);
+      await uploadBytes(imageRef, file);
+      const downloadURL = await getDownloadURL(imageRef);
+      await updateDoc(doc(db, "Users", auth.currentUser.uid), { photo: downloadURL });
+      setUserData((prev) => ({ ...prev, photo: downloadURL }));
+      console.log("✅ Profile picture updated");
+    } catch (error) {
+      console.error("❌ Error uploading profile picture:", error);
+    }
   };
 
+  // Upload cover photo
   const handleUploadCover = async (file) => {
     if (!file || !auth.currentUser) return;
-    const coverRef = ref(storage, `coverPhotos/${auth.currentUser.uid}`);
-    await uploadBytes(coverRef, file);
-    const downloadURL = await getDownloadURL(coverRef);
-    await updateDoc(doc(db, "Users", auth.currentUser.uid), { coverPhoto: downloadURL });
-    setCoverPhoto(downloadURL);
+    try {
+      const coverRef = ref(storage, `coverPhotos/${auth.currentUser.uid}`);
+      await uploadBytes(coverRef, file);
+      const downloadURL = await getDownloadURL(coverRef);
+      await updateDoc(doc(db, "Users", auth.currentUser.uid), { coverPhoto: downloadURL });
+      setCoverPhoto(downloadURL);
+      console.log("✅ Cover photo updated");
+    } catch (error) {
+      console.error("❌ Error uploading cover photo:", error);
+    }
+  };
+
+  // Create post
+  const handleCreatePost = async () => {
+    if (!auth.currentUser) return;
+    try {
+      let imageUrl = "";
+      if (postImage) {
+        const imageRef = ref(storage, `posts/${auth.currentUser.uid}_${Date.now()}`);
+        await uploadBytes(imageRef, postImage);
+        imageUrl = await getDownloadURL(imageRef);
+      }
+
+      await addDoc(collection(db, "Posts"), {
+        userId: auth.currentUser.uid,
+        text: postText.trim(),
+        image: imageUrl,
+        createdAt: new Date()
+      });
+
+      setPostText("");
+      setPostImage(null);
+      await fetchPosts(auth.currentUser.uid);
+      console.log("✅ Post created");
+    } catch (error) {
+      console.error("❌ Failed to create post:", error);
+    }
+  };
+
+  // Fetch posts
+  const fetchPosts = async (uid) => {
+    if (!uid) return;
+    try {
+      const q = query(
+        collection(db, "Posts"),
+        where("userId", "==", uid),
+        orderBy("createdAt", "desc")
+      );
+      const snapshot = await getDocs(q);
+      const userPosts = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setPosts(userPosts);
+    } catch (error) {
+      console.error("❌ Error fetching posts:", error);
+    }
   };
 
   // Search
@@ -76,32 +159,35 @@ function Profile() {
       setSearchResults([]);
       return;
     }
-    const firstNameQuery = query(collection(db, "Users"), where("firstName", "==", term));
-    const lastNameQuery = query(collection(db, "Users"), where("lastName", "==", term));
-    const [firstNameSnapshot, lastNameSnapshot] = await Promise.all([
-      getDocs(firstNameQuery),
-      getDocs(lastNameQuery)
-    ]);
-    const seen = new Set();
-    const results = [];
-    [...firstNameSnapshot.docs, ...lastNameSnapshot.docs].forEach((doc) => {
-      if (seen.has(doc.id)) return;
-      seen.add(doc.id);
-      const data = doc.data();
-      const photo =
-        !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-          ? FALLBACK_IMAGE
-          : data.photo;
-      results.push({ id: doc.id, ...data, photo });
-    });
-    setSearchResults(results);
+    try {
+      const firstNameQuery = query(collection(db, "Users"), where("firstName", "==", term));
+      const lastNameQuery = query(collection(db, "Users"), where("lastName", "==", term));
+      const [firstNameSnapshot, lastNameSnapshot] = await Promise.all([
+        getDocs(firstNameQuery),
+        getDocs(lastNameQuery)
+      ]);
+      const seen = new Set();
+      const results = [];
+      [...firstNameSnapshot.docs, ...lastNameSnapshot.docs].forEach((doc) => {
+        if (seen.has(doc.id)) return;
+        seen.add(doc.id);
+        const data = doc.data();
+        const photo =
+          !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+            ? FALLBACK_IMAGE
+            : data.photo;
+        results.push({ id: doc.id, ...data, photo });
+      });
+      setSearchResults(results);
+    } catch (error) {
+      console.error("❌ Error searching users:", error);
+    }
   };
 
   if (loading) return <div>Loading...</div>;
 
   return (
     <div style={{ maxWidth: "800px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
-      {/* Navbar */}
       <Navbar
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
@@ -211,6 +297,45 @@ function Profile() {
               <strong>{user.firstName} {user.lastName}</strong><br />
               <small>{user.email}</small>
             </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Create Post */}
+      <div style={{ marginTop: "20px", paddingLeft: "20px" }}>
+        <h3>Create Post</h3>
+        <textarea
+          value={postText}
+          onChange={(e) => setPostText(e.target.value)}
+          placeholder="What's on your mind?"
+          rows="3"
+          style={{ width: "100%", maxWidth: "500px", padding: "8px" }}
+        />
+        <div style={{ marginTop: "5px" }}>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              if (e.target.files[0]) setPostImage(e.target.files[0]);
+            }}
+          />
+        </div>
+        <button onClick={handleCreatePost} style={{ marginTop: "5px" }}>
+          Post
+        </button>
+      </div>
+
+      {/* Posts feed */}
+      <div style={{ marginTop: "20px", paddingLeft: "20px" }}>
+        <h3>Your Posts</h3>
+        {posts.length === 0 && <p>No posts yet.</p>}
+        {posts.map((post) => (
+          <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px", maxWidth: "500px" }}>
+            {post.text && <p>{post.text}</p>}
+            {post.image && <img src={post.image} alt="Post" style={{ width: "100%", maxHeight: "300px", objectFit: "cover" }} />}
+            <small style={{ color: "#555" }}>
+              Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
+            </small>
           </div>
         ))}
       </div>
