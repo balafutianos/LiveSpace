@@ -1,6 +1,6 @@
 // Profile.jsx
 import React, { useEffect, useState } from "react";
-import ProfileInfo from "./Profileinfo";
+import ProfileInfo from "./ProfileInfo";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db, storage } from "./firebase";
 import { deleteDoc, doc as firestoreDoc } from "firebase/firestore";
@@ -21,6 +21,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate } from "react-router-dom";
 import Navbar from "./Navbar";
+import Likefeature from "./Likefeature";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER = "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
@@ -139,11 +140,13 @@ function Profile() {
         await uploadBytes(imageRef, postImage);
         imageUrl = await getDownloadURL(imageRef);
       }
+      // initialize likes as empty array
       await addDoc(collection(db, "Posts"), {
         userId: auth.currentUser.uid,
         text: postText.trim(),
         image: imageUrl,
-        createdAt: new Date()
+        createdAt: new Date(),
+        likes: []
       });
       setPostText("");
       setPostImage(null);
@@ -305,16 +308,31 @@ function Profile() {
       <div style={{ marginTop: "20px", paddingLeft: "20px", paddingBottom: 40 }}>
         <h3>Your Posts</h3>
         {posts.length === 0 && <p>No posts yet.</p>}
-        {posts.map((post) => (
-          <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px", maxWidth: "700px" }}>
-            {post.text && <p>{post.text}</p>}
-            {post.image && <img src={post.image} alt="Post" style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }} />}
-            <small style={{ color: "#555", display: "block", marginTop: 8 }}>
-              Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
-            </small>
-            <button onClick={() => handleDeletePost(post.id)} style={{ marginTop: 8, color: "red" }}>Delete</button>
-          </div>
-        ))}
+        {posts.map((post) => {
+          return (
+            <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px", maxWidth: "700px" }}>
+              {post.text && <p>{post.text}</p>}
+              {post.image && <img src={post.image} alt="Post" style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }} />}
+              <small style={{ color: "#555", display: "block", marginTop: 8 }}>
+                Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
+              </small>
+
+              {/* Like feature component */}
+              <div style={{ marginTop: 8 }}>
+                <Likefeature
+                  postId={post.id}
+                  likes={post.likes || []}
+                  currentUserId={auth.currentUser?.uid}
+                  onChange={(newLikes) => {
+                    setPosts((prev) => prev.map(p => p.id === post.id ? { ...p, likes: newLikes } : p));
+                  }}
+                />
+              </div>
+
+              <button onClick={() => handleDeletePost(post.id)} style={{ marginTop: 8, color: "red" }}>Delete</button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
