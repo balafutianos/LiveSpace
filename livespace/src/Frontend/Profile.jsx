@@ -24,9 +24,15 @@ import Navbar from "./Navbar";
 import Likefeature from "./Likefeature";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
-const DEFAULT_COVER = "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
+const DEFAULT_COVER =
+  "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
 const FIREBASE_DEFAULT_IMAGE =
   "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
+
+function capitalize(word) {
+  if (!word) return "";
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
 
 function Profile() {
   const [userData, setUserData] = useState(null);
@@ -54,7 +60,7 @@ function Profile() {
 
   const navigate = useNavigate();
 
-  // auth & load
+  // Auth listener & load user
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -66,16 +72,24 @@ function Profile() {
         const userRef = doc(db, "Users", user.uid);
         const userDoc = await getDoc(userRef);
 
+        // Ensure memberSince exists on first sign-in
         if (!userDoc.exists()) {
-          // create with memberSince
-          await setDoc(userRef, { email: user.email || "", memberSince: serverTimestamp() }, { merge: true });
+          await setDoc(
+            userRef,
+            { email: user.email || "", memberSince: serverTimestamp() },
+            { merge: true }
+          );
         }
 
         const loaded = await getDoc(userRef);
         if (loaded.exists()) {
           const data = loaded.data();
-          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
+          const photo =
+            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+              ? FALLBACK_IMAGE
+              : data.photo;
           const cover = !data.coverPhoto || data.coverPhoto === "" ? DEFAULT_COVER : data.coverPhoto;
+
           setUserData({ ...data, photo });
           setCoverPhoto(cover);
 
@@ -101,6 +115,7 @@ function Profile() {
     });
 
     return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
   /* --- Profile uploads --- */
@@ -140,7 +155,7 @@ function Profile() {
         await uploadBytes(imageRef, postImage);
         imageUrl = await getDownloadURL(imageRef);
       }
-      // initialize likes as empty array
+
       await addDoc(collection(db, "Posts"), {
         userId: auth.currentUser.uid,
         text: postText.trim(),
@@ -148,6 +163,7 @@ function Profile() {
         createdAt: new Date(),
         likes: []
       });
+
       setPostText("");
       setPostImage(null);
       await fetchPosts(auth.currentUser.uid);
@@ -179,27 +195,64 @@ function Profile() {
 
   /* --- Search --- */
   const handleSearch = async () => {
-    const term = searchTerm.trim();
-    if (!term) {
+    const raw = (searchTerm || "").trim();
+    if (!raw) {
       setSearchResults([]);
       return;
     }
+
+    console.log("Searching for:", raw);
+
     try {
-      const q1 = query(collection(db, "Users"), where("firstName", "==", term));
-      const q2 = query(collection(db, "Users"), where("lastName", "==", term));
-      const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+      // If it looks like an email, search by email exact
+      if (raw.includes("@")) {
+        const q = query(collection(db, "Users"), where("email", "==", raw));
+        const snap = await getDocs(q);
+        const results = snap.docs.map(d => {
+          const data = d.data();
+          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
+          return { id: d.id, ...data, photo };
+        });
+        setSearchResults(results);
+        return;
+      }
+
+      // Otherwise try firstName/lastName with a few casing variants
+      const variants = [raw, raw.toLowerCase(), capitalize(raw.toLowerCase()), raw.toUpperCase()];
       const seen = new Set();
       const results = [];
-      [...s1.docs, ...s2.docs].forEach(d => {
-        if (seen.has(d.id)) return;
-        seen.add(d.id);
-        const data = d.data();
-        const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
-        results.push({ id: d.id, ...data, photo });
-      });
+
+      for (const v of variants) {
+        // firstName
+        const q1 = query(collection(db, "Users"), where("firstName", "==", v));
+        const snap1 = await getDocs(q1);
+        snap1.forEach(d => {
+          if (seen.has(d.id)) return;
+          seen.add(d.id);
+          const data = d.data();
+          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
+          results.push({ id: d.id, ...data, photo });
+        });
+
+        // lastName
+        const q2 = query(collection(db, "Users"), where("lastName", "==", v));
+        const snap2 = await getDocs(q2);
+        snap2.forEach(d => {
+          if (seen.has(d.id)) return;
+          seen.add(d.id);
+          const data = d.data();
+          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
+          results.push({ id: d.id, ...data, photo });
+        });
+
+        if (results.length > 0) break;
+      }
+
       setSearchResults(results);
+      console.log("Search results count:", results.length);
     } catch (err) {
       console.error("Search error:", err);
+      setSearchResults([]);
     }
   };
 
@@ -208,7 +261,6 @@ function Profile() {
     if (!auth.currentUser) return;
     try {
       const userRef = doc(db, "Users", auth.currentUser.uid);
-      // ensure memberSince exists
       const snapshot = await getDoc(userRef);
       const updates = {
         phone: profileForm.phone || "",
@@ -223,6 +275,7 @@ function Profile() {
         updates.memberSince = serverTimestamp();
       }
       await setDoc(userRef, updates, { merge: true });
+
       // reload userData
       const reloaded = await getDoc(userRef);
       if (reloaded.exists()) {
@@ -254,31 +307,83 @@ function Profile() {
 
   return (
     <div style={{ maxWidth: "900px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
-      <Navbar searchTerm={searchTerm} setSearchTerm={setSearchTerm} handleSearch={handleSearch} />
+      <Navbar
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        handleSearch={handleSearch}
+        searchResults={searchResults}
+      />
 
       {/* Cover & profile */}
       <div style={{ position: "relative" }}>
         <div style={{ position: "relative" }}>
           <img src={coverPhoto} alt="Cover" style={{ width: "100%", height: "260px", objectFit: "cover" }} />
-          <div className="cover-overlay" onClick={() => document.getElementById("coverInput").click()}
-               style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.35)", color: "white", display: "flex", justifyContent: "center", alignItems: "center", opacity: 0, cursor: "pointer", transition: "opacity 0.2s" }}>
+          <div
+            className="cover-overlay"
+            onClick={() => document.getElementById("coverInput").click()}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0,0,0,0.35)",
+              color: "white",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              opacity: 0,
+              cursor: "pointer",
+              transition: "opacity 0.2s"
+            }}
+          >
             Change Cover Photo
           </div>
-          <input type="file" id="coverInput" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
-            if (e.target.files[0]) await handleUploadCover(e.target.files[0]);
-          }} />
+          <input
+            type="file"
+            id="coverInput"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={async (e) => {
+              if (e.target.files[0]) await handleUploadCover(e.target.files[0]);
+            }}
+          />
         </div>
 
         <div style={{ position: "absolute", bottom: "-50px", left: "24px", width: "110px", height: "110px", borderRadius: "50%", overflow: "hidden", border: "4px solid white", background: "#eee" }}>
           <div style={{ position: "relative", width: "100%", height: "100%" }}>
             <img src={userData?.photo} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <div className="profile-overlay" onClick={() => document.getElementById("profileInput").click()}
-                 style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.35)", color: "white", display: "flex", justifyContent: "center", alignItems: "center", opacity: 0, cursor: "pointer", transition: "opacity 0.2s", borderRadius: "50%" }}>
+            <div
+              className="profile-overlay"
+              onClick={() => document.getElementById("profileInput").click()}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: "rgba(0,0,0,0.35)",
+                color: "white",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                opacity: 0,
+                cursor: "pointer",
+                transition: "opacity 0.2s",
+                borderRadius: "50%"
+              }}
+            >
               Change Photo
             </div>
-            <input type="file" id="profileInput" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
-              if (e.target.files[0]) await handleUploadProfile(e.target.files[0]);
-            }} />
+            <input
+              type="file"
+              id="profileInput"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                if (e.target.files[0]) await handleUploadProfile(e.target.files[0]);
+              }}
+            />
           </div>
         </div>
       </div>
@@ -297,9 +402,21 @@ function Profile() {
       {/* Create post */}
       <div style={{ marginTop: "20px", paddingLeft: "20px" }}>
         <h3>Create Post</h3>
-        <textarea value={postText} onChange={(e) => setPostText(e.target.value)} placeholder="What's on your mind?" rows="3" style={{ width: "100%", maxWidth: "600px", padding: "8px" }} />
+        <textarea
+          value={postText}
+          onChange={(e) => setPostText(e.target.value)}
+          placeholder="What's on your mind?"
+          rows="3"
+          style={{ width: "100%", maxWidth: "600px", padding: "8px" }}
+        />
         <div style={{ marginTop: "8px" }}>
-          <input type="file" accept="image/*" onChange={(e) => { if (e.target.files[0]) setPostImage(e.target.files[0]); }} />
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              if (e.target.files[0]) setPostImage(e.target.files[0]);
+            }}
+          />
         </div>
         <button onClick={handleCreatePost} style={{ marginTop: "8px" }}>Post</button>
       </div>
