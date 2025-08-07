@@ -3,8 +3,6 @@ import React, { useEffect, useState } from "react";
 import ProfileInfo from "./ProfileInfo";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db, storage } from "./firebase";
-import { deleteDoc, doc as firestoreDoc } from "firebase/firestore";
-
 import {
   doc,
   getDoc,
@@ -16,7 +14,8 @@ import {
   query,
   where,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  deleteDoc
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate } from "react-router-dom";
@@ -24,10 +23,8 @@ import Navbar from "./Navbar";
 import Likefeature from "./Likefeature";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
-const DEFAULT_COVER =
-  "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
-const FIREBASE_DEFAULT_IMAGE =
-  "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
+const DEFAULT_COVER = "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
+const FIREBASE_DEFAULT_IMAGE = "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
 
 function capitalize(word) {
   if (!word) return "";
@@ -38,9 +35,8 @@ function Profile() {
   const [userData, setUserData] = useState(null);
   const [coverPhoto, setCoverPhoto] = useState(DEFAULT_COVER);
   const [loading, setLoading] = useState(true);
-
-  // profile info state
   const [editing, setEditing] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({
     phone: "",
     email: "",
@@ -51,7 +47,6 @@ function Profile() {
     city: ""
   });
 
-  // posts & search
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [postText, setPostText] = useState("");
@@ -60,7 +55,6 @@ function Profile() {
 
   const navigate = useNavigate();
 
-  // Auth listener & load user
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -72,27 +66,17 @@ function Profile() {
         const userRef = doc(db, "Users", user.uid);
         const userDoc = await getDoc(userRef);
 
-        // Ensure memberSince exists on first sign-in
         if (!userDoc.exists()) {
-          await setDoc(
-            userRef,
-            { email: user.email || "", memberSince: serverTimestamp() },
-            { merge: true }
-          );
+          await setDoc(userRef, { email: user.email || "", memberSince: serverTimestamp() }, { merge: true });
         }
 
         const loaded = await getDoc(userRef);
         if (loaded.exists()) {
           const data = loaded.data();
-          const photo =
-            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-              ? FALLBACK_IMAGE
-              : data.photo;
+          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
           const cover = !data.coverPhoto || data.coverPhoto === "" ? DEFAULT_COVER : data.coverPhoto;
-
           setUserData({ ...data, photo });
           setCoverPhoto(cover);
-
           setProfileForm({
             phone: data.phone || "",
             email: data.email || user.email || "",
@@ -102,7 +86,6 @@ function Profile() {
             about: data.about || "",
             city: data.city || ""
           });
-
           await fetchPosts(user.uid);
         } else {
           setUserData(null);
@@ -115,10 +98,8 @@ function Profile() {
     });
 
     return () => unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
-  /* --- Profile uploads --- */
   const handleUploadProfile = async (file) => {
     if (!file || !auth.currentUser) return;
     try {
@@ -145,7 +126,6 @@ function Profile() {
     }
   };
 
-  /* --- Posts --- */
   const handleCreatePost = async () => {
     if (!auth.currentUser) return;
     try {
@@ -155,7 +135,6 @@ function Profile() {
         await uploadBytes(imageRef, postImage);
         imageUrl = await getDownloadURL(imageRef);
       }
-
       await addDoc(collection(db, "Posts"), {
         userId: auth.currentUser.uid,
         text: postText.trim(),
@@ -163,7 +142,6 @@ function Profile() {
         createdAt: new Date(),
         likes: []
       });
-
       setPostText("");
       setPostImage(null);
       await fetchPosts(auth.currentUser.uid);
@@ -186,77 +164,13 @@ function Profile() {
 
   const handleDeletePost = async (postId) => {
     try {
-      await deleteDoc(firestoreDoc(db, "Posts", postId));
+      await deleteDoc(doc(db, "Posts", postId));
       setPosts((p) => p.filter(x => x.id !== postId));
     } catch (err) {
       console.error("Error deleting post:", err);
     }
   };
 
-  /* --- Search --- */
-  const handleSearch = async () => {
-    const raw = (searchTerm || "").trim();
-    if (!raw) {
-      setSearchResults([]);
-      return;
-    }
-
-    console.log("Searching for:", raw);
-
-    try {
-      // If it looks like an email, search by email exact
-      if (raw.includes("@")) {
-        const q = query(collection(db, "Users"), where("email", "==", raw));
-        const snap = await getDocs(q);
-        const results = snap.docs.map(d => {
-          const data = d.data();
-          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
-          return { id: d.id, ...data, photo };
-        });
-        setSearchResults(results);
-        return;
-      }
-
-      // Otherwise try firstName/lastName with a few casing variants
-      const variants = [raw, raw.toLowerCase(), capitalize(raw.toLowerCase()), raw.toUpperCase()];
-      const seen = new Set();
-      const results = [];
-
-      for (const v of variants) {
-        // firstName
-        const q1 = query(collection(db, "Users"), where("firstName", "==", v));
-        const snap1 = await getDocs(q1);
-        snap1.forEach(d => {
-          if (seen.has(d.id)) return;
-          seen.add(d.id);
-          const data = d.data();
-          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
-          results.push({ id: d.id, ...data, photo });
-        });
-
-        // lastName
-        const q2 = query(collection(db, "Users"), where("lastName", "==", v));
-        const snap2 = await getDocs(q2);
-        snap2.forEach(d => {
-          if (seen.has(d.id)) return;
-          seen.add(d.id);
-          const data = d.data();
-          const photo = !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : data.photo;
-          results.push({ id: d.id, ...data, photo });
-        });
-
-        if (results.length > 0) break;
-      }
-
-      setSearchResults(results);
-      console.log("Search results count:", results.length);
-    } catch (err) {
-      console.error("Search error:", err);
-      setSearchResults([]);
-    }
-  };
-
-  /* --- Profile form save/cancel (passed to ProfileInfo) --- */
   const handleSaveProfile = async () => {
     if (!auth.currentUser) return;
     try {
@@ -275,8 +189,6 @@ function Profile() {
         updates.memberSince = serverTimestamp();
       }
       await setDoc(userRef, updates, { merge: true });
-
-      // reload userData
       const reloaded = await getDoc(userRef);
       if (reloaded.exists()) {
         const data = reloaded.data();
@@ -310,85 +222,129 @@ function Profile() {
       <Navbar
         searchTerm={searchTerm}
         setSearchTerm={setSearchTerm}
-        handleSearch={handleSearch}
+        handleSearch={() => {}}
         searchResults={searchResults}
       />
 
-      {/* Cover & profile */}
-      <div style={{ position: "relative" }}>
-        <div style={{ position: "relative" }}>
-          <img src={coverPhoto} alt="Cover" style={{ width: "100%", height: "260px", objectFit: "cover" }} />
-          <div
-            className="cover-overlay"
-            onClick={() => document.getElementById("coverInput").click()}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: "rgba(0,0,0,0.35)",
-              color: "white",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              opacity: 0,
-              cursor: "pointer",
-              transition: "opacity 0.2s"
-            }}
-          >
-            Change Cover Photo
-          </div>
+      {/* Cover & Profile Image */}
+      <div style={{ position: "relative", marginBottom: "40px" }}>
+        <img
+          src={coverPhoto}
+          alt="Cover"
+          style={{ width: "100%", height: "260px", objectFit: "cover" }}
+        />
+        <input
+          type="file"
+          id="coverInput"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (e.target.files[0]) handleUploadCover(e.target.files[0]);
+          }}
+        />
+        <div style={{
+          position: "absolute",
+          bottom: "-55px",
+          left: "30px",
+          width: "110px",
+          height: "110px",
+          borderRadius: "50%",
+          overflow: "hidden",
+          border: "4px solid white",
+          background: "#eee"
+        }}>
           <input
             type="file"
-            id="coverInput"
+            id="profileInput"
             accept="image/*"
             style={{ display: "none" }}
-            onChange={async (e) => {
-              if (e.target.files[0]) await handleUploadCover(e.target.files[0]);
+            onChange={(e) => {
+              if (e.target.files[0]) handleUploadProfile(e.target.files[0]);
             }}
           />
-        </div>
-
-        <div style={{ position: "absolute", bottom: "-50px", left: "24px", width: "110px", height: "110px", borderRadius: "50%", overflow: "hidden", border: "4px solid white", background: "#eee" }}>
-          <div style={{ position: "relative", width: "100%", height: "100%" }}>
-            <img src={userData?.photo} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <div
-              className="profile-overlay"
-              onClick={() => document.getElementById("profileInput").click()}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: "rgba(0,0,0,0.35)",
-                color: "white",
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                opacity: 0,
-                cursor: "pointer",
-                transition: "opacity 0.2s",
-                borderRadius: "50%"
-              }}
-            >
-              Change Photo
-            </div>
-            <input
-              type="file"
-              id="profileInput"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={async (e) => {
-                if (e.target.files[0]) await handleUploadProfile(e.target.files[0]);
-              }}
-            />
-          </div>
+          <img
+            src={userData?.photo}
+            alt="Profile"
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
         </div>
       </div>
 
-      {/* ProfileInfo component */}
+     {/* Name and Update Info (aligned beside profile image) */}
+<div
+  style={{
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    position: "relative",
+    marginTop: "-35px",
+    padding: "0 24px",
+    marginBottom: "10px"
+  }}
+>
+  {/* Name, next to profile pic */}
+  <h2 style={{ marginLeft: "140px", fontSize: "22px", marginBottom: 0 }}>
+    {userData?.firstName} {userData?.lastName}
+  </h2>
+
+  {/* Update Info dropdown */}
+  <div style={{ position: "relative" }}>
+    <button
+      onClick={() => setDropdownOpen(!dropdownOpen)}
+      style={{
+        padding: "6px 12px",
+        fontSize: "13px",
+        backgroundColor: "#eee",
+        border: "1px solid #aaa",
+        cursor: "pointer"
+      }}
+    >
+      Update Info
+    </button>
+    {dropdownOpen && (
+      <div
+        style={{
+          position: "absolute",
+          top: "36px",
+          right: 0,
+          backgroundColor: "#fff",
+          border: "1px solid #ccc",
+          borderRadius: "4px",
+          boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+          zIndex: 10
+        }}
+      >
+        <div
+          onClick={() => {
+            document.getElementById("profileInput").click();
+            setDropdownOpen(false);
+          }}
+          style={{
+            padding: "8px 12px",
+            cursor: "pointer",
+            fontSize: "13px",
+            borderBottom: "1px solid #eee"
+          }}
+        >
+          Change Profile Picture
+        </div>
+        <div
+          onClick={() => {
+            document.getElementById("coverInput").click();
+            setDropdownOpen(false);
+          }}
+          style={{ padding: "8px 12px", cursor: "pointer", fontSize: "13px" }}
+        >
+          Change Cover Photo
+        </div>
+      </div>
+    )}
+  </div>
+</div>
+
+
+
+      {/* Profile Info */}
       <ProfileInfo
         userData={userData}
         editing={editing}
@@ -399,7 +355,7 @@ function Profile() {
         handleCancelEdit={handleCancelEdit}
       />
 
-      {/* Create post */}
+      {/* Posts */}
       <div style={{ marginTop: "20px", paddingLeft: "20px" }}>
         <h3>Create Post</h3>
         <textarea
@@ -421,35 +377,39 @@ function Profile() {
         <button onClick={handleCreatePost} style={{ marginTop: "8px" }}>Post</button>
       </div>
 
-      {/* Posts feed */}
       <div style={{ marginTop: "20px", paddingLeft: "20px", paddingBottom: 40 }}>
         <h3>Your Posts</h3>
         {posts.length === 0 && <p>No posts yet.</p>}
-        {posts.map((post) => {
-          return (
-            <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px", maxWidth: "700px" }}>
-              {post.text && <p>{post.text}</p>}
-              {post.image && <img src={post.image} alt="Post" style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }} />}
-              <small style={{ color: "#555", display: "block", marginTop: 8 }}>
-                Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
-              </small>
-
-              {/* Like feature component */}
-              <div style={{ marginTop: 8 }}>
-                <Likefeature
-                  postId={post.id}
-                  likes={post.likes || []}
-                  currentUserId={auth.currentUser?.uid}
-                  onChange={(newLikes) => {
-                    setPosts((prev) => prev.map(p => p.id === post.id ? { ...p, likes: newLikes } : p));
-                  }}
-                />
-              </div>
-
-              <button onClick={() => handleDeletePost(post.id)} style={{ marginTop: 8, color: "red" }}>Delete</button>
+        {posts.map((post) => (
+          <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px", maxWidth: "700px" }}>
+            {post.text && <p>{post.text}</p>}
+            {post.image && (
+              <img
+                src={post.image}
+                alt="Post"
+                style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
+              />
+            )}
+            <small style={{ color: "#555", display: "block", marginTop: 8 }}>
+              Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
+            </small>
+            <div style={{ marginTop: 8 }}>
+              <Likefeature
+                postId={post.id}
+                likes={post.likes || []}
+                currentUserId={auth.currentUser?.uid}
+                onChange={(newLikes) =>
+                  setPosts((prev) =>
+                    prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
+                  )
+                }
+              />
             </div>
-          );
-        })}
+            <button onClick={() => handleDeletePost(post.id)} style={{ marginTop: 8, color: "red" }}>
+              Delete
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );
