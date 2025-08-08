@@ -16,6 +16,8 @@ function ProfileInfo({
         <div
           style={{
             padding: "16px",
+            marginLeft: "-23px",
+            marginTop: "-67px",
             border: "1px solid #ccc",
             borderRadius: "4px",
             backgroundColor: "#f9f9f9"

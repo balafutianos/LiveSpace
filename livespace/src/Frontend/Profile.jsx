@@ -44,6 +44,8 @@ function Profile() {
   const [postText, setPostText] = useState("");
   const [postImage, setPostImage] = useState(null);
   const [posts, setPosts] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+const [searchResults, setSearchResults] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -161,6 +163,48 @@ function Profile() {
       console.error("Error deleting post:", err);
     }
   };
+  
+  const handleSearch = async () => {
+  if (!searchTerm.trim()) return;
+
+  try {
+    const usersRef = collection(db, "Users");
+
+    // Search by first name
+    const firstNameQuery = query(
+      usersRef,
+      where("firstName", ">=", searchTerm),
+      where("firstName", "<=", searchTerm + "\uf8ff")
+    );
+
+    // Search by email (optional additional search)
+    const emailQuery = query(
+      usersRef,
+      where("email", ">=", searchTerm),
+      where("email", "<=", searchTerm + "\uf8ff")
+    );
+
+    const [firstNameSnapshot, emailSnapshot] = await Promise.all([
+      getDocs(firstNameQuery),
+      getDocs(emailQuery)
+    ]);
+
+    // Merge and remove duplicates
+    const seen = new Set();
+    const results = [...firstNameSnapshot.docs, ...emailSnapshot.docs]
+      .filter(doc => {
+        if (seen.has(doc.id)) return false;
+        seen.add(doc.id);
+        return true;
+      })
+      .map(doc => ({ id: doc.id, ...doc.data() }));
+
+    setSearchResults(results);
+  } catch (err) {
+    console.error("Search error:", err);
+  }
+};
+
 
   const handleSaveProfile = async () => {
     if (!auth.currentUser) return;
@@ -208,7 +252,13 @@ function Profile() {
 
   return (
     <div style={{ maxWidth: "1000px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
-      <Navbar />
+      <Navbar
+  searchTerm={searchTerm}
+  setSearchTerm={setSearchTerm}
+  handleSearch={handleSearch}
+  searchResults={searchResults}
+/>
+
 
       <div style={{ position: "relative", marginBottom: "40px" }}>
         <img
@@ -252,6 +302,8 @@ function Profile() {
           />
         </div>
       </div>
+
+      
 
       {/* Header row: Name + Stats + Update button */}
       <div style={{
