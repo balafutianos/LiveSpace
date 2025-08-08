@@ -1,4 +1,3 @@
-// Profile.jsx
 import React, { useEffect, useState } from "react";
 import ProfileInfo from "./ProfileInfo";
 import { onAuthStateChanged } from "firebase/auth";
@@ -26,11 +25,6 @@ const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER = "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
 const FIREBASE_DEFAULT_IMAGE = "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
 
-function capitalize(word) {
-  if (!word) return "";
-  return word.charAt(0).toUpperCase() + word.slice(1);
-}
-
 function Profile() {
   const [userData, setUserData] = useState(null);
   const [coverPhoto, setCoverPhoto] = useState(DEFAULT_COVER);
@@ -47,12 +41,11 @@ function Profile() {
     city: ""
   });
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
   const [postText, setPostText] = useState("");
   const [postImage, setPostImage] = useState(null);
   const [posts, setPosts] = useState([]);
-
+  const [searchTerm, setSearchTerm] = useState("");
+const [searchResults, setSearchResults] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -170,12 +163,53 @@ function Profile() {
       console.error("Error deleting post:", err);
     }
   };
+  
+  const handleSearch = async () => {
+  if (!searchTerm.trim()) return;
+
+  try {
+    const usersRef = collection(db, "Users");
+
+    // Search by first name
+    const firstNameQuery = query(
+      usersRef,
+      where("firstName", ">=", searchTerm),
+      where("firstName", "<=", searchTerm + "\uf8ff")
+    );
+
+    // Search by email (optional additional search)
+    const emailQuery = query(
+      usersRef,
+      where("email", ">=", searchTerm),
+      where("email", "<=", searchTerm + "\uf8ff")
+    );
+
+    const [firstNameSnapshot, emailSnapshot] = await Promise.all([
+      getDocs(firstNameQuery),
+      getDocs(emailQuery)
+    ]);
+
+    // Merge and remove duplicates
+    const seen = new Set();
+    const results = [...firstNameSnapshot.docs, ...emailSnapshot.docs]
+      .filter(doc => {
+        if (seen.has(doc.id)) return false;
+        seen.add(doc.id);
+        return true;
+      })
+      .map(doc => ({ id: doc.id, ...doc.data() }));
+
+    setSearchResults(results);
+  } catch (err) {
+    console.error("Search error:", err);
+  }
+};
+
 
   const handleSaveProfile = async () => {
     if (!auth.currentUser) return;
     try {
       const userRef = doc(db, "Users", auth.currentUser.uid);
-      const snapshot = await getDoc(userRef);
       const updates = {
         phone: profileForm.phone || "",
         email: profileForm.email || "",
@@ -185,9 +219,6 @@ function Profile() {
         about: profileForm.about || "",
         city: profileForm.city || ""
       };
-      if (!snapshot.exists() || !snapshot.data().memberSince) {
-        updates.memberSince = serverTimestamp();
-      }
       await setDoc(userRef, updates, { merge: true });
       const reloaded = await getDoc(userRef);
       if (reloaded.exists()) {
@@ -217,21 +248,23 @@ function Profile() {
 
   if (loading) return <div>Loading...</div>;
 
-  return (
-    <div style={{ maxWidth: "900px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
-      <Navbar
-        searchTerm={searchTerm}
-        setSearchTerm={setSearchTerm}
-        handleSearch={() => {}}
-        searchResults={searchResults}
-      />
+  const totalLikes = posts.reduce((acc, post) => acc + (post.likes?.length || 0), 0);
 
-      {/* Cover & Profile Image */}
+  return (
+    <div style={{ maxWidth: "1000px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
+      <Navbar
+  searchTerm={searchTerm}
+  setSearchTerm={setSearchTerm}
+  handleSearch={handleSearch}
+  searchResults={searchResults}
+/>
+
+
       <div style={{ position: "relative", marginBottom: "40px" }}>
         <img
           src={coverPhoto}
           alt="Cover"
-          style={{ width: "100%", height: "260px", objectFit: "cover" }}
+          style={{ width: "100%", height: "240px", objectFit: "cover" }}
         />
         <input
           type="file"
@@ -245,7 +278,7 @@ function Profile() {
         <div style={{
           position: "absolute",
           bottom: "-55px",
-          left: "30px",
+          left: "40px",
           width: "110px",
           height: "110px",
           borderRadius: "50%",
@@ -270,79 +303,86 @@ function Profile() {
         </div>
       </div>
 
-     {/* Name and Update Info (aligned beside profile image) */}
-<div
-  style={{
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    position: "relative",
-    marginTop: "-35px",
-    padding: "0 24px",
-    marginBottom: "10px"
-  }}
->
-  {/* Name, next to profile pic */}
-  <h2 style={{ marginLeft: "140px", fontSize: "22px", marginBottom: 0 }}>
-    {userData?.firstName} {userData?.lastName}
-  </h2>
+      
 
-  {/* Update Info dropdown */}
-  <div style={{ position: "relative" }}>
-    <button
-      onClick={() => setDropdownOpen(!dropdownOpen)}
-      style={{
-        padding: "6px 12px",
-        fontSize: "13px",
-        backgroundColor: "#eee",
-        border: "1px solid #aaa",
-        cursor: "pointer"
-      }}
-    >
-      Update Info
-    </button>
-    {dropdownOpen && (
-      <div
-        style={{
-          position: "absolute",
-          top: "36px",
-          right: 0,
-          backgroundColor: "#fff",
-          border: "1px solid #ccc",
-          borderRadius: "4px",
-          boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-          zIndex: 10
-        }}
-      >
-        <div
-          onClick={() => {
-            document.getElementById("profileInput").click();
-            setDropdownOpen(false);
-          }}
-          style={{
-            padding: "8px 12px",
-            cursor: "pointer",
-            fontSize: "13px",
-            borderBottom: "1px solid #eee"
-          }}
-        >
-          Change Profile Picture
+      {/* Header row: Name + Stats + Update button */}
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        background: "#1f2b39",
+        color: "#fff",
+        padding: "-16px 4px",
+        marginTop: "-50px",
+        borderRadius: "4px"
+      }}>
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <h2 style={{ marginLeft: "160px", fontSize: "24px" }}>
+            {userData?.firstName} {userData?.lastName}
+          </h2>
         </div>
-        <div
-          onClick={() => {
-            document.getElementById("coverInput").click();
-            setDropdownOpen(false);
-          }}
-          style={{ padding: "8px 12px", cursor: "pointer", fontSize: "13px" }}
-        >
-          Change Cover Photo
+        <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
+          <div>
+            <strong>Friends</strong>
+            <div style={{ color: "#00ff90", textAlign: "center" }}>10</div>
+          </div>
+          <div>
+            <strong>Photos</strong>
+            <div style={{ color: "#00ff90", textAlign: "center" }}>10</div>
+          </div>
+          <div>
+            <strong>Likes</strong>
+            <div style={{ color: "#00ff90", textAlign: "center" }}>{totalLikes}</div>
+          </div>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              style={{
+                backgroundColor: "#00ff90",
+                border: "none",
+                padding: "10px 16px",
+                borderRadius: "6px",
+                fontWeight: "bold",
+                marginRight:"23px",
+                cursor: "pointer"
+              }}
+            >
+              Update Info
+            </button>
+            {dropdownOpen && (
+              <div style={{
+                position: "absolute",
+                top: "40px",
+                right: 0,
+                backgroundColor: "#fff",
+                color: "#000",
+                border: "1px solid #ccc",
+                borderRadius: "4px",
+                zIndex: 10
+              }}>
+                <div
+                  onClick={() => {
+                    document.getElementById("profileInput").click();
+                    setDropdownOpen(false);
+                  }}
+                  style={{ padding: "10px", cursor: "pointer", borderBottom: "1px solid #eee" }}
+                >
+                  Change Profile Picture
+                </div>
+                <div
+                  onClick={() => {
+                    document.getElementById("coverInput").click();
+                    setDropdownOpen(false);
+                  }}
+                  style={{ padding: "10px", cursor: "pointer" }}
+                >
+                  Change Cover Photo
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    )}
-  </div>
-</div>
-
-
 
       {/* Profile Info */}
       <ProfileInfo
@@ -355,15 +395,15 @@ function Profile() {
         handleCancelEdit={handleCancelEdit}
       />
 
-      {/* Posts */}
-      <div style={{ marginTop: "20px", paddingLeft: "20px" }}>
+      {/* Posts Section */}
+      <div style={{ marginTop: "40px", paddingLeft: "24px", paddingRight: "24px", paddingBottom: "60px" }}>
         <h3>Create Post</h3>
         <textarea
           value={postText}
           onChange={(e) => setPostText(e.target.value)}
           placeholder="What's on your mind?"
           rows="3"
-          style={{ width: "100%", maxWidth: "600px", padding: "8px" }}
+          style={{ width: "100%", padding: "8px" }}
         />
         <div style={{ marginTop: "8px" }}>
           <input
@@ -375,41 +415,41 @@ function Profile() {
           />
         </div>
         <button onClick={handleCreatePost} style={{ marginTop: "8px" }}>Post</button>
-      </div>
 
-      <div style={{ marginTop: "20px", paddingLeft: "20px", paddingBottom: 40 }}>
-        <h3>Your Posts</h3>
-        {posts.length === 0 && <p>No posts yet.</p>}
-        {posts.map((post) => (
-          <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px", maxWidth: "700px" }}>
-            {post.text && <p>{post.text}</p>}
-            {post.image && (
-              <img
-                src={post.image}
-                alt="Post"
-                style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
-              />
-            )}
-            <small style={{ color: "#555", display: "block", marginTop: 8 }}>
-              Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
-            </small>
-            <div style={{ marginTop: 8 }}>
-              <Likefeature
-                postId={post.id}
-                likes={post.likes || []}
-                currentUserId={auth.currentUser?.uid}
-                onChange={(newLikes) =>
-                  setPosts((prev) =>
-                    prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
-                  )
-                }
-              />
+        <div style={{ marginTop: "24px" }}>
+          <h3>Your Posts</h3>
+          {posts.length === 0 && <p>No posts yet.</p>}
+          {posts.map((post) => (
+            <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px" }}>
+              {post.text && <p>{post.text}</p>}
+              {post.image && (
+                <img
+                  src={post.image}
+                  alt="Post"
+                  style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
+                />
+              )}
+              <small style={{ color: "#555", display: "block", marginTop: 8 }}>
+                Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
+              </small>
+              <div style={{ marginTop: 8 }}>
+                <Likefeature
+                  postId={post.id}
+                  likes={post.likes || []}
+                  currentUserId={auth.currentUser?.uid}
+                  onChange={(newLikes) =>
+                    setPosts((prev) =>
+                      prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
+                    )
+                  }
+                />
+              </div>
+              <button onClick={() => handleDeletePost(post.id)} style={{ marginTop: 8, color: "red" }}>
+                Delete
+              </button>
             </div>
-            <button onClick={() => handleDeletePost(post.id)} style={{ marginTop: 8, color: "red" }}>
-              Delete
-            </button>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
