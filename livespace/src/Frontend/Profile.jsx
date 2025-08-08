@@ -1,4 +1,3 @@
-// Profile.jsx
 import React, { useEffect, useState } from "react";
 import ProfileInfo from "./ProfileInfo";
 import { onAuthStateChanged } from "firebase/auth";
@@ -25,11 +24,6 @@ import Likefeature from "./Likefeature";
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER = "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
 const FIREBASE_DEFAULT_IMAGE = "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
-
-function capitalize(word) {
-  if (!word) return "";
-  return word.charAt(0).toUpperCase() + word.slice(1);
-}
 
 function Profile() {
   const [userData, setUserData] = useState(null);
@@ -228,123 +222,37 @@ function Profile() {
 
       {/* Cover & Profile Image */}
       <div style={{ position: "relative", marginBottom: "40px" }}>
-        <img
-          src={coverPhoto}
-          alt="Cover"
-          style={{ width: "100%", height: "260px", objectFit: "cover" }}
-        />
-        <input
-          type="file"
-          id="coverInput"
-          accept="image/*"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            if (e.target.files[0]) handleUploadCover(e.target.files[0]);
-          }}
-        />
-        <div style={{
-          position: "absolute",
-          bottom: "-55px",
-          left: "30px",
-          width: "110px",
-          height: "110px",
-          borderRadius: "50%",
-          overflow: "hidden",
-          border: "4px solid white",
-          background: "#eee"
-        }}>
-          <input
-            type="file"
-            id="profileInput"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              if (e.target.files[0]) handleUploadProfile(e.target.files[0]);
-            }}
-          />
-          <img
-            src={userData?.photo}
-            alt="Profile"
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-          />
+        <img src={coverPhoto} alt="Cover" style={{ width: "100%", height: "260px", objectFit: "cover" }} />
+        <input type="file" id="coverInput" accept="image/*" style={{ display: "none" }}
+          onChange={(e) => e.target.files[0] && handleUploadCover(e.target.files[0])} />
+        <div style={{ position: "absolute", bottom: "-55px", left: "30px", width: "110px", height: "110px", borderRadius: "50%", overflow: "hidden", border: "4px solid white", background: "#eee" }}>
+          <input type="file" id="profileInput" accept="image/*" style={{ display: "none" }}
+            onChange={(e) => e.target.files[0] && handleUploadProfile(e.target.files[0])} />
+          <img src={userData?.photo} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         </div>
       </div>
 
-     {/* Name and Update Info (aligned beside profile image) */}
-<div
-  style={{
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    position: "relative",
-    marginTop: "-35px",
-    padding: "0 24px",
-    marginBottom: "10px"
-  }}
->
-  {/* Name, next to profile pic */}
-  <h2 style={{ marginLeft: "140px", fontSize: "22px", marginBottom: 0 }}>
-    {userData?.firstName} {userData?.lastName}
-  </h2>
-
-  {/* Update Info dropdown */}
-  <div style={{ position: "relative" }}>
-    <button
-      onClick={() => setDropdownOpen(!dropdownOpen)}
-      style={{
-        padding: "6px 12px",
-        fontSize: "13px",
-        backgroundColor: "#eee",
-        border: "1px solid #aaa",
-        cursor: "pointer"
-      }}
-    >
-      Update Info
-    </button>
-    {dropdownOpen && (
-      <div
-        style={{
-          position: "absolute",
-          top: "36px",
-          right: 0,
-          backgroundColor: "#fff",
-          border: "1px solid #ccc",
-          borderRadius: "4px",
-          boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-          zIndex: 10
-        }}
-      >
-        <div
-          onClick={() => {
-            document.getElementById("profileInput").click();
-            setDropdownOpen(false);
-          }}
-          style={{
-            padding: "8px 12px",
-            cursor: "pointer",
-            fontSize: "13px",
-            borderBottom: "1px solid #eee"
-          }}
-        >
-          Change Profile Picture
+      {/* Header layout like screenshot */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#1f2d3d", color: "white", padding: "10px 24px", marginTop: "-45px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <h2 style={{ margin: 0, fontSize: "24px" }}>{userData?.firstName} {userData?.lastName}</h2>
         </div>
-        <div
-          onClick={() => {
-            document.getElementById("coverInput").click();
-            setDropdownOpen(false);
-          }}
-          style={{ padding: "8px 12px", cursor: "pointer", fontSize: "13px" }}
-        >
-          Change Cover Photo
+        <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
+          <div style={{ textAlign: "center" }}><strong>Friends</strong><div style={{ color: "#00ff90", fontWeight: "bold" }}>10</div></div>
+          <div style={{ textAlign: "center" }}><strong>Photos</strong><div style={{ color: "#00ff90", fontWeight: "bold" }}>10</div></div>
+          <div style={{ textAlign: "center" }}><strong>Likes</strong><div style={{ color: "#00ff90", fontWeight: "bold" }}>{posts.reduce((total, post) => total + (post.likes?.length || 0), 0)}</div></div>
+        </div>
+        <div style={{ position: "relative" }}>
+          <button onClick={() => setDropdownOpen(!dropdownOpen)} style={{ padding: "8px 14px", backgroundColor: "#00e38d", border: "none", fontWeight: "bold", borderRadius: "4px", cursor: "pointer" }}>Update Info</button>
+          {dropdownOpen && (
+            <div style={{ position: "absolute", top: "40px", right: 0, backgroundColor: "#fff", color: "#000", border: "1px solid #ccc", borderRadius: "4px", boxShadow: "0 2px 6px rgba(0,0,0,0.2)", zIndex: 10 }}>
+              <div onClick={() => { document.getElementById("profileInput").click(); setDropdownOpen(false); }} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: "1px solid #eee" }}>Change Profile Picture</div>
+              <div onClick={() => { document.getElementById("coverInput").click(); setDropdownOpen(false); }} style={{ padding: "10px 14px", cursor: "pointer" }}>Change Cover Photo</div>
+            </div>
+          )}
         </div>
       </div>
-    )}
-  </div>
-</div>
 
-
-
-      {/* Profile Info */}
       <ProfileInfo
         userData={userData}
         editing={editing}
@@ -355,24 +263,11 @@ function Profile() {
         handleCancelEdit={handleCancelEdit}
       />
 
-      {/* Posts */}
       <div style={{ marginTop: "20px", paddingLeft: "20px" }}>
         <h3>Create Post</h3>
-        <textarea
-          value={postText}
-          onChange={(e) => setPostText(e.target.value)}
-          placeholder="What's on your mind?"
-          rows="3"
-          style={{ width: "100%", maxWidth: "600px", padding: "8px" }}
-        />
+        <textarea value={postText} onChange={(e) => setPostText(e.target.value)} placeholder="What's on your mind?" rows="3" style={{ width: "100%", maxWidth: "600px", padding: "8px" }} />
         <div style={{ marginTop: "8px" }}>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              if (e.target.files[0]) setPostImage(e.target.files[0]);
-            }}
-          />
+          <input type="file" accept="image/*" onChange={(e) => e.target.files[0] && setPostImage(e.target.files[0])} />
         </div>
         <button onClick={handleCreatePost} style={{ marginTop: "8px" }}>Post</button>
       </div>
@@ -383,13 +278,7 @@ function Profile() {
         {posts.map((post) => (
           <div key={post.id} style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px", maxWidth: "700px" }}>
             {post.text && <p>{post.text}</p>}
-            {post.image && (
-              <img
-                src={post.image}
-                alt="Post"
-                style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
-              />
-            )}
+            {post.image && <img src={post.image} alt="Post" style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }} />}
             <small style={{ color: "#555", display: "block", marginTop: 8 }}>
               Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
             </small>
