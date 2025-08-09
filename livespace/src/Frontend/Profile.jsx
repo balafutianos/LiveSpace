@@ -1,8 +1,11 @@
 // Profile.jsx
-import React, { useEffect, useState, useMemo } from "react";
-import ProfileInfo from "./ProfileInfo";
+import React, { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth, db, storage } from "./firebase";
+import {
+  auth,
+  db,
+  storage
+} from "./firebase";
 import {
   doc,
   getDoc,
@@ -19,23 +22,39 @@ import {
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
+
 import Navbar from "./Navbar";
+import ProfileInfo from "./ProfileInfo";
 import Likefeature from "./Likefeature";
+import FriendButton from "./FriendButton";
+import FriendInbox from "./FriendInbox";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
-const DEFAULT_COVER = "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
-const FIREBASE_DEFAULT_IMAGE = "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
+const DEFAULT_COVER =
+  "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
+const FIREBASE_DEFAULT_IMAGE =
+  "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
 
-function Profile() {
-  const { uid: routeUid } = useParams(); // if visiting someone else: /profile/:uid
-  const [authedUser, setAuthedUser] = useState(null);
+function capitalize(word) {
+  if (!word) return "";
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
 
+export default function Profile() {
+  const navigate = useNavigate();
+  const params = useParams(); // expects optional :uid
+  const [authReady, setAuthReady] = useState(false);
+
+  // Who's page are we viewing?
+  const [viewingUserId, setViewingUserId] = useState(null);
+
+  // Header/profile state
   const [userData, setUserData] = useState(null);
   const [coverPhoto, setCoverPhoto] = useState(DEFAULT_COVER);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
 
+  // ProfileInfo editing
+  const [editing, setEditing] = useState(false);
   const [profileForm, setProfileForm] = useState({
     phone: "",
     email: "",
@@ -46,52 +65,58 @@ function Profile() {
     city: ""
   });
 
-  // Search state for Navbar
+  // Search (Navbar)
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState([]);
 
-  // Posts state
+  // Posts
   const [postText, setPostText] = useState("");
   const [postImage, setPostImage] = useState(null);
   const [posts, setPosts] = useState([]);
 
-  const navigate = useNavigate();
-
-  // Who are we viewing?
-  const viewedUserId = useMemo(() => routeUid || authedUser?.uid || null, [routeUid, authedUser]);
+  // Friends
+  const [friendCount, setFriendCount] = useState(0);
   const isOwnProfile = useMemo(
-    () => !!authedUser && !!viewedUserId && authedUser.uid === viewedUserId,
-    [authedUser, viewedUserId]
+    () => auth.currentUser?.uid && viewingUserId && auth.currentUser.uid === viewingUserId,
+    [viewingUserId, auth.currentUser?.uid]
   );
+  const [dropdownOpen, setDropdownOpen] = useState(false);
 
-  // Auth listener
+  // --- Auth + route handling ---
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
-      setAuthedUser(user || null);
-      if (!user && !routeUid) {
-        // if not logged in and trying to see own profile page, push to login
+      if (!user) {
         navigate("/login");
+        return;
       }
+      setAuthReady(true);
     });
     return () => unsub();
-  }, [navigate, routeUid]);
+  }, [navigate]);
 
-  // Load profile (for either self or other user)
+  // Decide viewing user id when auth or route param changes
   useEffect(() => {
-    if (!viewedUserId) return;
-    let cancelled = false;
+    if (!authReady) return;
+    const uidToView = params.uid || auth.currentUser?.uid;
+    setViewingUserId(uidToView || null);
+  }, [authReady, params.uid]);
+
+  // Load profile + posts for viewingUserId
+  useEffect(() => {
+    if (!viewingUserId) return;
+    let mounted = true;
 
     (async () => {
       setLoading(true);
       try {
-        const userRef = doc(db, "Users", viewedUserId);
-        const userDoc = await getDoc(userRef);
+        const userRef = doc(db, "Users", viewingUserId);
+        const snap = await getDoc(userRef);
 
-        // If we're on own profile and doc missing, ensure memberSince
-        if (!userDoc.exists() && isOwnProfile && authedUser?.email) {
+        // If we are on our own profile and the doc doesn't exist, create skeleton
+        if (!snap.exists() && auth.currentUser?.uid === viewingUserId) {
           await setDoc(
             userRef,
-            { email: authedUser.email, memberSince: serverTimestamp() },
+            { email: auth.currentUser.email || "", memberSince: serverTimestamp() },
             { merge: true }
           );
         }
@@ -106,96 +131,46 @@ function Profile() {
           const cover =
             !data.coverPhoto || data.coverPhoto === "" ? DEFAULT_COVER : data.coverPhoto;
 
-          if (!cancelled) {
-            setUserData({ ...data, photo });
-            setCoverPhoto(cover);
-            setProfileForm({
-              phone: data.phone || "",
-              email: data.email || authedUser?.email || "",
-              sex: data.sex || "Male",
-              birthday: data.birthday || "",
-              work: data.work || "",
-              about: data.about || "",
-              city: data.city || ""
-            });
-          }
+          if (!mounted) return;
+          setUserData({ ...data, photo });
+          setCoverPhoto(cover);
+          setProfileForm({
+            phone: data.phone || "",
+            email: data.email || "",
+            sex: data.sex || "Male",
+            birthday: data.birthday || "",
+            work: data.work || "",
+            about: data.about || "",
+            city: data.city || ""
+          });
         } else {
-          if (!cancelled) setUserData(null);
+          if (!mounted) return;
+          setUserData(null);
         }
 
-        await fetchPosts(viewedUserId);
+        await fetchPosts(viewingUserId);
+        await refreshFriendCount(viewingUserId);
       } catch (err) {
-        console.error("Error loading profile:", err);
+        console.error("Error loading viewing profile:", err);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (mounted) setLoading(false);
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [viewedUserId, isOwnProfile, authedUser]);
+    return () => { mounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewingUserId]);
 
-  /* --- Uploads (only affects own profile) --- */
-  const handleUploadProfile = async (file) => {
-    if (!file || !authedUser || !isOwnProfile) return;
-    try {
-      const imageRef = ref(storage, `profilePictures/${authedUser.uid}`);
-      await uploadBytes(imageRef, file);
-      const url = await getDownloadURL(imageRef);
-      await updateDoc(doc(db, "Users", authedUser.uid), { photo: url });
-      setUserData((p) => ({ ...p, photo: url }));
-    } catch (err) {
-      console.error("Error upload profile:", err);
-    }
-  };
-
-  const handleUploadCover = async (file) => {
-    if (!file || !authedUser || !isOwnProfile) return;
-    try {
-      const coverRef = ref(storage, `coverPhotos/${authedUser.uid}`);
-      await uploadBytes(coverRef, file);
-      const url = await getDownloadURL(coverRef);
-      await updateDoc(doc(db, "Users", authedUser.uid), { coverPhoto: url });
-      setCoverPhoto(url);
-    } catch (err) {
-      console.error("Error upload cover:", err);
-    }
-  };
-
-  /* --- Posts (create/delete only on own profile) --- */
-  const handleCreatePost = async () => {
-    if (!authedUser || !isOwnProfile) return;
-    try {
-      let imageUrl = "";
-      if (postImage) {
-        const imageRef = ref(storage, `posts/${authedUser.uid}_${Date.now()}`);
-        await uploadBytes(imageRef, postImage);
-        imageUrl = await getDownloadURL(imageRef);
-      }
-      await addDoc(collection(db, "Posts"), {
-        userId: authedUser.uid,
-        text: postText.trim(),
-        image: imageUrl,
-        createdAt: new Date(),
-        likes: []
-      });
-      setPostText("");
-      setPostImage(null);
-      await fetchPosts(viewedUserId);
-    } catch (err) {
-      console.error("Error creating post:", err);
-    }
-  };
-
+  // --- Helpers ---
   const fetchPosts = async (uid) => {
+    if (!uid) return;
     try {
-      const q = query(
+      const qy = query(
         collection(db, "Posts"),
         where("userId", "==", uid),
         orderBy("createdAt", "desc")
       );
-      const snap = await getDocs(q);
+      const snap = await getDocs(qy);
       const loaded = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((p) => p.text || p.image);
@@ -205,8 +180,75 @@ function Profile() {
     }
   };
 
+  async function refreshFriendCount(uid) {
+    try {
+      const frRef = collection(db, "FriendRequests");
+      const q1 = query(frRef, where("fromId", "==", uid), where("status", "==", "accepted"));
+      const q2 = query(frRef, where("toId", "==", uid), where("status", "==", "accepted"));
+      const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+      setFriendCount(s1.size + s2.size);
+    } catch (e) {
+      console.error("Friend count error:", e);
+    }
+  }
+
+  // --- Uploads (only allow on own profile) ---
+  const handleUploadProfile = async (file) => {
+    if (!file || !auth.currentUser || !isOwnProfile) return;
+    try {
+      const imageRef = ref(storage, `profilePictures/${auth.currentUser.uid}`);
+      await uploadBytes(imageRef, file);
+      const url = await getDownloadURL(imageRef);
+      await updateDoc(doc(db, "Users", auth.currentUser.uid), { photo: url });
+      setUserData((p) => ({ ...p, photo: url }));
+    } catch (err) {
+      console.error("Error upload profile:", err);
+    }
+  };
+
+  const handleUploadCover = async (file) => {
+    if (!file || !auth.currentUser || !isOwnProfile) return;
+    try {
+      const coverRef = ref(storage, `coverPhotos/${auth.currentUser.uid}`);
+      await uploadBytes(coverRef, file);
+      const url = await getDownloadURL(coverRef);
+      await updateDoc(doc(db, "Users", auth.currentUser.uid), { coverPhoto: url });
+      setCoverPhoto(url);
+    } catch (err) {
+      console.error("Error upload cover:", err);
+    }
+  };
+
+  // --- Posts (can only create on own profile) ---
+  const handleCreatePost = async () => {
+    if (!auth.currentUser || !isOwnProfile) return;
+    try {
+      let imageUrl = "";
+      if (postImage) {
+        const imageRef = ref(storage, `posts/${auth.currentUser.uid}_${Date.now()}`);
+        await uploadBytes(imageRef, postImage);
+        imageUrl = await getDownloadURL(imageRef);
+      }
+      await addDoc(collection(db, "Posts"), {
+        userId: auth.currentUser.uid,
+        text: postText.trim(),
+        image: imageUrl,
+        createdAt: new Date(),
+        likes: []
+      });
+      setPostText("");
+      setPostImage(null);
+      await fetchPosts(auth.currentUser.uid);
+    } catch (err) {
+      console.error("Error creating post:", err);
+    }
+  };
+
   const handleDeletePost = async (postId) => {
-    if (!isOwnProfile) return;
+    // Only allow deleting if it's your post
+    const target = posts.find(p => p.id === postId);
+    if (!target || target.userId !== auth.currentUser?.uid) return;
+
     try {
       await deleteDoc(doc(db, "Posts", postId));
       setPosts((p) => p.filter((x) => x.id !== postId));
@@ -215,47 +257,76 @@ function Profile() {
     }
   };
 
-  /* --- Search for Navbar --- */
+  // --- Search (Navbar) ---
   const handleSearch = async () => {
-    if (!searchTerm?.trim()) return;
+    const raw = (searchTerm || "").trim();
+    if (!raw) {
+      setSearchResults([]);
+      return;
+    }
     try {
-      const usersRef = collection(db, "Users");
+      // email exact
+      if (raw.includes("@")) {
+        const qEmail = query(collection(db, "Users"), where("email", "==", raw));
+        const sEmail = await getDocs(qEmail);
+        const results = sEmail.docs.map((d) => {
+          const data = d.data();
+          const photo =
+            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+              ? FALLBACK_IMAGE
+              : data.photo;
+          return { id: d.id, ...data, photo };
+        });
+        setSearchResults(results);
+        return;
+      }
 
-      // firstName prefix
-      const q1 = query(
-        usersRef,
-        where("firstName", ">=", searchTerm),
-        where("firstName", "<=", searchTerm + "\uf8ff")
-      );
-      // email prefix
-      const q2 = query(
-        usersRef,
-        where("email", ">=", searchTerm),
-        where("email", "<=", searchTerm + "\uf8ff")
-      );
-
-      const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
-
+      const variants = [raw, raw.toLowerCase(), capitalize(raw.toLowerCase()), raw.toUpperCase()];
       const seen = new Set();
-      const results = [...s1.docs, ...s2.docs]
-        .filter((d) => {
-          if (seen.has(d.id)) return false;
+      const results = [];
+
+      for (const v of variants) {
+        const q1 = query(collection(db, "Users"), where("firstName", "==", v));
+        const s1 = await getDocs(q1);
+        s1.forEach((d) => {
+          if (seen.has(d.id)) return;
           seen.add(d.id);
-          return true;
-        })
-        .map((d) => ({ id: d.id, ...d.data() }));
+          const data = d.data();
+          const photo =
+            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+              ? FALLBACK_IMAGE
+              : data.photo;
+          results.push({ id: d.id, ...data, photo });
+        });
+
+        const q2 = query(collection(db, "Users"), where("lastName", "==", v));
+        const s2 = await getDocs(q2);
+        s2.forEach((d) => {
+          if (seen.has(d.id)) return;
+          seen.add(d.id);
+          const data = d.data();
+          const photo =
+            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+              ? FALLBACK_IMAGE
+              : data.photo;
+          results.push({ id: d.id, ...data, photo });
+        });
+
+        if (results.length > 0) break;
+      }
 
       setSearchResults(results);
     } catch (err) {
       console.error("Search error:", err);
+      setSearchResults([]);
     }
   };
 
-  /* --- Save/Cancel profile (own only) --- */
+  // --- Save/Cancel profile (own profile only) ---
   const handleSaveProfile = async () => {
-    if (!authedUser || !isOwnProfile) return;
+    if (!auth.currentUser || !isOwnProfile) return;
     try {
-      const userRef = doc(db, "Users", authedUser.uid);
+      const userRef = doc(db, "Users", auth.currentUser.uid);
       const updates = {
         phone: profileForm.phone || "",
         email: profileForm.email || "",
@@ -266,9 +337,10 @@ function Profile() {
         city: profileForm.city || ""
       };
       await setDoc(userRef, updates, { merge: true });
-      const reloaded = await getDoc(userRef);
-      if (reloaded.exists()) {
-        const data = reloaded.data();
+
+      const re = await getDoc(userRef);
+      if (re.exists()) {
+        const data = re.data();
         const photo =
           !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
             ? FALLBACK_IMAGE
@@ -285,7 +357,7 @@ function Profile() {
     if (!userData) return;
     setProfileForm({
       phone: userData.phone || "",
-      email: userData.email || authedUser?.email || "",
+      email: userData.email || "",
       sex: userData.sex || "Male",
       birthday: userData.birthday || "",
       work: userData.work || "",
@@ -301,12 +373,15 @@ function Profile() {
 
   return (
     <div style={{ maxWidth: "1000px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
-      <Navbar
-        searchTerm={searchTerm}
-        setSearchTerm={setSearchTerm}
-        handleSearch={handleSearch}
-        searchResults={searchResults}
-      />
+     <Navbar
+  currentUserId={auth.currentUser?.uid}
+  searchTerm={searchTerm}
+  setSearchTerm={setSearchTerm}
+  handleSearch={handleSearch}
+  searchResults={searchResults}
+/>
+
+
 
       {/* Cover + Avatar */}
       <div style={{ position: "relative", marginBottom: "40px" }}>
@@ -315,6 +390,7 @@ function Profile() {
           alt="Cover"
           style={{ width: "100%", height: "240px", objectFit: "cover" }}
         />
+        {/* Hidden cover input (own profile only) */}
         {isOwnProfile && (
           <input
             type="file"
@@ -322,10 +398,11 @@ function Profile() {
             accept="image/*"
             style={{ display: "none" }}
             onChange={(e) => {
-              if (e.target.files[0]) handleUploadCover(e.target.files[0]);
+              if (e.target.files && e.target.files[0]) handleUploadCover(e.target.files[0]);
             }}
           />
         )}
+
         <div
           style={{
             position: "absolute",
@@ -339,6 +416,7 @@ function Profile() {
             background: "#eee"
           }}
         >
+          {/* Hidden avatar input (own profile only) */}
           {isOwnProfile && (
             <input
               type="file"
@@ -346,7 +424,7 @@ function Profile() {
               accept="image/*"
               style={{ display: "none" }}
               onChange={(e) => {
-                if (e.target.files[0]) handleUploadProfile(e.target.files[0]);
+                if (e.target.files && e.target.files[0]) handleUploadProfile(e.target.files[0]);
               }}
             />
           )}
@@ -358,7 +436,7 @@ function Profile() {
         </div>
       </div>
 
-      {/* Header: Name + Stats + Update button (Update only if own) */}
+      {/* Header row: Name + Stats + Update/Friend button */}
       <div
         style={{
           display: "flex",
@@ -376,10 +454,11 @@ function Profile() {
             {userData?.firstName} {userData?.lastName}
           </h2>
         </div>
+
         <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
           <div>
             <strong>Friends</strong>
-            <div style={{ color: "#00ff90", textAlign: "center" }}>10</div>
+            <div style={{ color: "#00ff90", textAlign: "center" }}>{friendCount}</div>
           </div>
           <div>
             <strong>Photos</strong>
@@ -390,72 +469,89 @@ function Profile() {
             <div style={{ color: "#00ff90", textAlign: "center" }}>{totalLikes}</div>
           </div>
 
-          {isOwnProfile && (
-            <div style={{ position: "relative" }}>
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                style={{
-                  backgroundColor: "#00ff90",
-                  border: "none",
-                  padding: "10px 16px",
-                  borderRadius: "6px",
-                  fontWeight: "bold",
-                  marginRight: "23px",
-                  cursor: "pointer"
-                }}
-              >
-                Update Info
-              </button>
-              {dropdownOpen && (
-                <div
+          <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+            {/* Friend button appears on other users' profiles */}
+            {!isOwnProfile && auth.currentUser?.uid && viewingUserId && (
+              <FriendButton
+                viewerId={auth.currentUser.uid}
+                profileUserId={viewingUserId}
+                onChanged={() => refreshFriendCount(viewingUserId)}
+              />
+            )}
+
+            {/* Update Info (only on own profile) */}
+            {isOwnProfile && (
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => setDropdownOpen(!dropdownOpen)}
                   style={{
-                    position: "absolute",
-                    top: "40px",
-                    right: 0,
-                    backgroundColor: "#fff",
-                    color: "#000",
-                    border: "1px solid #ccc",
-                    borderRadius: "4px",
-                    zIndex: 10
+                    backgroundColor: "#00ff90",
+                    border: "none",
+                    padding: "10px 16px",
+                    borderRadius: "6px",
+                    fontWeight: "bold",
+                    marginRight: "23px",
+                    cursor: "pointer"
                   }}
                 >
+                  Update Info
+                </button>
+                {dropdownOpen && (
                   <div
-                    onClick={() => {
-                      document.getElementById("profileInput").click();
-                      setDropdownOpen(false);
+                    style={{
+                      position: "absolute",
+                      top: "40px",
+                      right: 0,
+                      backgroundColor: "#fff",
+                      color: "#000",
+                      border: "1px solid #ccc",
+                      borderRadius: "4px",
+                      zIndex: 10
                     }}
-                    style={{ padding: "10px", cursor: "pointer", borderBottom: "1px solid #eee" }}
                   >
-                    Change Profile Picture
+                    <div
+                      onClick={() => {
+                        document.getElementById("profileInput").click();
+                        setDropdownOpen(false);
+                      }}
+                      style={{ padding: "10px", cursor: "pointer", borderBottom: "1px solid #eee" }}
+                    >
+                      Change Profile Picture
+                    </div>
+                    <div
+                      onClick={() => {
+                        document.getElementById("coverInput").click();
+                        setDropdownOpen(false);
+                      }}
+                      style={{ padding: "10px", cursor: "pointer" }}
+                    >
+                      Change Cover Photo
+                    </div>
                   </div>
-                  <div
-                    onClick={() => {
-                      document.getElementById("coverInput").click();
-                      setDropdownOpen(false);
-                    }}
-                    style={{ padding: "10px", cursor: "pointer" }}
-                  >
-                    Change Cover Photo
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Profile Info (editing only on own profile) */}
+      {/* Incoming Friend Requests Inbox (only on own profile)
+      {isOwnProfile && auth.currentUser?.uid && (
+        <FriendInbox currentUserId={auth.currentUser.uid} />
+      )} */}
+
+      {/* Profile Info card */}
       <ProfileInfo
         userData={userData}
-        editing={isOwnProfile ? editing : false}
+        editing={editing}
         profileForm={profileForm}
         setProfileForm={setProfileForm}
-        setEditing={isOwnProfile ? setEditing : () => {}}
+        setEditing={setEditing}
         handleSaveProfile={handleSaveProfile}
         handleCancelEdit={handleCancelEdit}
       />
 
-      {/* Posts Section (create/delete only on own profile; viewing works for all) */}
+      {/* Posts section (create only on own profile; view on all) */}
       <div style={{ marginTop: "40px", paddingLeft: "24px", paddingRight: "24px", paddingBottom: "60px" }}>
         {isOwnProfile && (
           <>
@@ -472,7 +568,7 @@ function Profile() {
                 type="file"
                 accept="image/*"
                 onChange={(e) => {
-                  if (e.target.files[0]) setPostImage(e.target.files[0]);
+                  if (e.target.files && e.target.files[0]) setPostImage(e.target.files[0]);
                 }}
               />
             </div>
@@ -503,18 +599,15 @@ function Profile() {
               </small>
               <div style={{ marginTop: 8 }}>
                 <Likefeature
-  postId={post.id}
-  likes={post.likes || []}
-  currentUserId={authedUser?.uid}   // key: the logged-in user
-  onChange={(newLikes) => {
-    setPosts((prev) =>
-      prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
-    );
-  }}
-/>
-
+                  postId={post.id}
+                  likes={post.likes || []}
+                  currentUserId={auth.currentUser?.uid}
+                  onChange={(newLikes) =>
+                    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p)))
+                  }
+                />
               </div>
-              {isOwnProfile && (
+              {post.userId === auth.currentUser?.uid && (
                 <button
                   onClick={() => handleDeletePost(post.id)}
                   style={{ marginTop: 8, color: "red" }}
@@ -529,5 +622,3 @@ function Profile() {
     </div>
   );
 }
-
-export default Profile;
