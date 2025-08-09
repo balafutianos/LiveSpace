@@ -1,4 +1,6 @@
+// Navbar.jsx
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function Navbar({
   searchTerm = "",
@@ -6,6 +8,8 @@ export default function Navbar({
   handleSearch = () => {},
   searchResults = []
 }) {
+  const navigate = useNavigate();
+
   return (
     <nav
       style={{
@@ -68,7 +72,7 @@ export default function Navbar({
           Search
         </button>
 
-        {/* Search result dropdown */}
+        {/* Results dropdown */}
         {searchResults.length > 0 && (
           <div
             style={{
@@ -80,7 +84,7 @@ export default function Navbar({
               color: "#000",
               borderRadius: "0 0 6px 6px",
               boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-              maxHeight: "200px",
+              maxHeight: "220px",
               overflowY: "auto",
               zIndex: 1000
             }}
@@ -97,8 +101,7 @@ export default function Navbar({
                   borderBottom: "1px solid #eee"
                 }}
                 onClick={() => {
-                  console.log("Clicked user:", u);
-                  // You can navigate to /profile/:id here if needed
+                  navigate(`/profile/${u.id}`);
                 }}
               >
                 <img
