@@ -1,11 +1,7 @@
 // Profile.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import {
-  auth,
-  db,
-  storage
-} from "./firebase";
+import { auth, db, storage } from "./firebase";
 import {
   doc,
   getDoc,
@@ -18,7 +14,9 @@ import {
   where,
   orderBy,
   serverTimestamp,
-  deleteDoc
+  deleteDoc,
+  onSnapshot,
+  getCountFromServer
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
@@ -161,6 +159,24 @@ export default function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingUserId]);
 
+  // Listen to accepted friendships for the viewed profile (string IDs only)
+  useEffect(() => {
+    if (!viewingUserId) return;
+    const frRef = collection(db, "FriendRequests");
+
+    const unsub1 = onSnapshot(
+      query(frRef, where("fromId", "==", viewingUserId), where("status", "==", "accepted")),
+      () => refreshFriendCount(viewingUserId)
+    );
+    const unsub2 = onSnapshot(
+      query(frRef, where("toId", "==", viewingUserId), where("status", "==", "accepted")),
+      () => refreshFriendCount(viewingUserId)
+    );
+
+    return () => { unsub1(); unsub2(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewingUserId]);
+
   // --- Helpers ---
   const fetchPosts = async (uid) => {
     if (!uid) return;
@@ -182,13 +198,16 @@ export default function Profile() {
 
   async function refreshFriendCount(uid) {
     try {
+      if (!uid) return;
       const frRef = collection(db, "FriendRequests");
-      const q1 = query(frRef, where("fromId", "==", uid), where("status", "==", "accepted"));
-      const q2 = query(frRef, where("toId", "==", uid), where("status", "==", "accepted"));
-      const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
-      setFriendCount(s1.size + s2.size);
+      const [fromAccepted, toAccepted] = await Promise.all([
+        getCountFromServer(query(frRef, where("fromId", "==", uid), where("status", "==", "accepted"))),
+        getCountFromServer(query(frRef, where("toId", "==", uid), where("status", "==", "accepted"))),
+      ]);
+      setFriendCount(fromAccepted.data().count + toAccepted.data().count);
     } catch (e) {
       console.error("Friend count error:", e);
+      setFriendCount(0);
     }
   }
 
@@ -245,7 +264,6 @@ export default function Profile() {
   };
 
   const handleDeletePost = async (postId) => {
-    // Only allow deleting if it's your post
     const target = posts.find(p => p.id === postId);
     if (!target || target.userId !== auth.currentUser?.uid) return;
 
@@ -373,15 +391,13 @@ export default function Profile() {
 
   return (
     <div style={{ maxWidth: "1000px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
-     <Navbar
-  currentUserId={auth.currentUser?.uid}
-  searchTerm={searchTerm}
-  setSearchTerm={setSearchTerm}
-  handleSearch={handleSearch}
-  searchResults={searchResults}
-/>
-
-
+      <Navbar
+        currentUserId={auth.currentUser?.uid}
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        handleSearch={handleSearch}
+        searchResults={searchResults}
+      />
 
       {/* Cover + Avatar */}
       <div style={{ position: "relative", marginBottom: "40px" }}>
@@ -390,7 +406,6 @@ export default function Profile() {
           alt="Cover"
           style={{ width: "100%", height: "240px", objectFit: "cover" }}
         />
-        {/* Hidden cover input (own profile only) */}
         {isOwnProfile && (
           <input
             type="file"
@@ -416,7 +431,6 @@ export default function Profile() {
             background: "#eee"
           }}
         >
-          {/* Hidden avatar input (own profile only) */}
           {isOwnProfile && (
             <input
               type="file"
@@ -436,7 +450,7 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* Header row: Name + Stats + Update/Friend button */}
+      {/* Header row */}
       <div
         style={{
           display: "flex",
@@ -457,7 +471,7 @@ export default function Profile() {
 
         <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
           <div>
-            <strong>Friends</strong>
+            <strong>Friend List</strong>
             <div style={{ color: "#00ff90", textAlign: "center" }}>{friendCount}</div>
           </div>
           <div>
@@ -470,7 +484,6 @@ export default function Profile() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
-            {/* Friend button appears on other users' profiles */}
             {!isOwnProfile && auth.currentUser?.uid && viewingUserId && (
               <FriendButton
                 viewerId={auth.currentUser.uid}
@@ -479,7 +492,6 @@ export default function Profile() {
               />
             )}
 
-            {/* Update Info (only on own profile) */}
             {isOwnProfile && (
               <div style={{ position: "relative" }}>
                 <button
@@ -535,23 +547,25 @@ export default function Profile() {
         </div>
       </div>
 
-      {/* Incoming Friend Requests Inbox (only on own profile)
+      {/* Inbox (only on own profile) */}
       {isOwnProfile && auth.currentUser?.uid && (
         <FriendInbox currentUserId={auth.currentUser.uid} />
-      )} */}
+      )}
 
       {/* Profile Info card */}
       <ProfileInfo
-        userData={userData}
-        editing={editing}
-        profileForm={profileForm}
-        setProfileForm={setProfileForm}
-        setEditing={setEditing}
-        handleSaveProfile={handleSaveProfile}
-        handleCancelEdit={handleCancelEdit}
-      />
+  userData={userData}
+  editing={editing}
+  profileForm={profileForm}
+  setProfileForm={setProfileForm}
+  setEditing={setEditing}
+  handleSaveProfile={handleSaveProfile}
+  handleCancelEdit={handleCancelEdit}
+  profileUserId={viewingUserId}   // <-- add this
+/>
 
-      {/* Posts section (create only on own profile; view on all) */}
+
+      {/* Posts */}
       <div style={{ marginTop: "40px", paddingLeft: "24px", paddingRight: "24px", paddingBottom: "60px" }}>
         {isOwnProfile && (
           <>

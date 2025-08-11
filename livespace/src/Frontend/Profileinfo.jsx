@@ -1,4 +1,6 @@
+// ProfileInfo.jsx
 import React from "react";
+import FriendList from "./FriendList";
 
 function ProfileInfo({
   userData,
@@ -7,7 +9,8 @@ function ProfileInfo({
   setProfileForm,
   setEditing,
   handleSaveProfile,
-  handleCancelEdit
+  handleCancelEdit,
+  profileUserId // <-- pass the profile owner's uid
 }) {
   return (
     <div style={{ display: "flex", marginTop: "70px", padding: "0 24px", gap: "24px" }}>
@@ -158,18 +161,19 @@ function ProfileInfo({
         </div>
       </div>
 
-      {/* Right Section: Placeholder for Friends List */}
+      {/* Right Section: Friends grid */}
       <div style={{ flex: 1 }}>
         <div
           style={{
             border: "1px solid #ccc",
             borderRadius: "4px",
             backgroundColor: "#f4f4f4",
-            padding: "10px"
+            padding: "10px",
+            marginTop: "-64px"
           }}
         >
           <h4 style={{ marginTop: 0 }}>Friends</h4>
-          <p style={{ fontSize: "13px", color: "#777" }}>Friend list coming soon...</p>
+          <FriendList userId={profileUserId} max={12} />
         </div>
       </div>
     </div>
