@@ -168,7 +168,8 @@ function ProfileInfo({
             border: "1px solid #ccc",
             borderRadius: "4px",
             backgroundColor: "#f4f4f4",
-            padding: "10px"
+            padding: "10px",
+            marginTop: "-64px"
           }}
         >
           <h4 style={{ marginTop: 0 }}>Friends</h4>

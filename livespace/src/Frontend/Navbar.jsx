@@ -1,5 +1,5 @@
 // Navbar.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   doc,
@@ -9,7 +9,6 @@ import {
   updateDoc,
   where,
   serverTimestamp,
-  writeBatch,
   setDoc,
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -21,11 +20,32 @@ export default function Navbar({
   handleSearch = () => {},
   searchResults = [],
 }) {
-  const [pending, setPending] = useState([]);  // FriendRequests
-  const [senders, setSenders] = useState({});  // fromId -> user data
+  const [pending, setPending] = useState([]);   // FriendRequests
+  const [senders, setSenders] = useState({});   // fromId -> user data
   const [openReq, setOpenReq] = useState(false);
 
+  const reqWrapRef = useRef(null); // wraps the button + dropdown
+
   const pendingCount = pending.length;
+
+  // Close dropdown on outside click / Esc
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!openReq) return;
+      if (reqWrapRef.current && !reqWrapRef.current.contains(e.target)) {
+        setOpenReq(false);
+      }
+    }
+    function onEsc(e) {
+      if (e.key === "Escape") setOpenReq(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [openReq]);
 
   // Subscribe to my pending requests
   useEffect(() => {
@@ -75,38 +95,37 @@ export default function Navbar({
   }, [currentUserId]);
 
   const handleAccept = async (req) => {
-  try {
-    // 1) mark request accepted + respondedAt (allowed by rules now)
-    await updateDoc(doc(db, "FriendRequests", req.id), {
-      status: "accepted",
-      respondedAt: serverTimestamp(),
-    });
-
-    // 2) create/merge friendship pair
-    const [a, b] = [req.fromId, req.toId].sort();
-    const pairId = `${a}_${b}`;
-    await setDoc(
-      doc(db, "Friends", pairId),
-      { userIds: [a, b], createdAt: serverTimestamp() },
-      { merge: true }
-    );
+    try {
+      // mark request accepted
+      await updateDoc(doc(db, "FriendRequests", req.id), {
+        status: "accepted",
+        respondedAt: serverTimestamp(),
+      });
+      // create/merge friendship pair
+      const [a, b] = [req.fromId, req.toId].sort();
+      const pairId = `${a}_${b}`;
+      await setDoc(
+        doc(db, "Friends", pairId),
+        { userIds: [a, b], createdAt: serverTimestamp() },
+        { merge: true }
+      );
     } catch (e) {
-    console.error("Accept error details:", e?.code, e?.message);
-    alert(`Could not accept: ${e?.code || ''} ${e?.message || ''}`);
-  }
-};
+      console.error("Accept error:", e);
+      alert(`Could not accept: ${e?.code || ""} ${e?.message || ""}`);
+    }
+  };
 
   const handleDecline = async (req) => {
-  try {
-    await updateDoc(doc(db, "FriendRequests", req.id), {
-      status: "declined",
-      respondedAt: serverTimestamp(),
-    });
-  } catch (e) {
-    console.error("Decline error:", e);
-    alert("Could not decline request.");
-  }
-};
+    try {
+      await updateDoc(doc(db, "FriendRequests", req.id), {
+        status: "declined",
+        respondedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.error("Decline error:", e);
+      alert("Could not decline request.");
+    }
+  };
 
   const hasSearchResults = useMemo(
     () => Array.isArray(searchResults) && searchResults.length > 0,
@@ -118,153 +137,157 @@ export default function Navbar({
       style={{
         backgroundColor: "#122939",
         color: "#fff",
-        padding: "10px 20px",
+        padding: "10px 20px 18px",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         position: "relative",
       }}
     >
-      {/* Requests button (top-left) */}
+      {/* Requests button (top-left, anchored) */}
       <div style={{ position: "absolute", left: 16, top: 10 }}>
-        <button
-          onClick={() => setOpenReq((o) => !o)}
-          title="Friend requests"
-          style={{
-            position: "relative",
-            background: "transparent",
-            border: "1px solid rgba(255,255,255,0.25)",
-            color: "#fff",
-            borderRadius: 20,
-            padding: "6px 10px",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <span style={{ fontSize: 16 }}>🔔</span>
-          <span style={{ fontSize: 13 }}>Requests</span>
-          {pendingCount > 0 && (
-            <span
-              style={{
-                marginLeft: 6,
-                minWidth: 18,
-                height: 18,
-                borderRadius: 9,
-                background: "#27D496",
-                color: "#052023",
-                fontWeight: 700,
-                fontSize: 12,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "0 6px",
-              }}
-            >
-              {pendingCount}
-            </span>
-          )}
-        </button>
-
-        {/* Dropdown list of requests */}
-        {openReq && (
-          <div
+        <div ref={reqWrapRef} style={{ position: "relative", display: "inline-block" }}>
+          <button
+            onClick={() => setOpenReq((o) => !o)}
+            title="Friend requests"
             style={{
-              position: "absolute",
-              top: 36,
-              left: 0,
-              width: 340,
-              background: "#fff",
-              color: "#000",
-              borderRadius: 8,
-              boxShadow: "0 8px 18px rgba(0,0,0,0.25)",
-              zIndex: 2000,
-              overflow: "hidden",
+              background: "transparent",
+              border: "1px solid rgba(255,255,255,0.25)",
+              color: "#fff",
+              borderRadius: 20,
+              padding: "6px 10px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop:"32px",
             }}
           >
+            <span style={{ fontSize: 16 }}>🔔</span>
+            <span style={{ fontSize: 13 }}>Requests</span>
+            {pendingCount > 0 && (
+              <span
+                style={{
+                  marginLeft: 6,
+                  minWidth: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  background: "#27D496",
+                  color: "#052023",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "0 6px",
+                }}
+              >
+                {pendingCount}
+              </span>
+            )}
+          </button>
+
+          {/* Dropdown anchored under the button */}
+          {openReq && (
             <div
               style={{
-                padding: "10px 12px",
-                fontWeight: 700,
-                borderBottom: "1px solid #eee",
-                background: "#f7f9fb",
+                position: "absolute",
+                top: "calc(100% + 8px)", // <- directly below button
+                left: 0,
+                width: 340,
+                background: "#fff",
+                color: "#000",
+                borderRadius: 8,
+                boxShadow: "0 12px 24px rgba(0,0,0,0.25)",
+                zIndex: 10000,
+                overflow: "hidden",
+                
               }}
             >
-              Friend Requests
-            </div>
+              <div
+                style={{
+                  padding: "10px 12px",
+                  fontWeight: 700,
+                  borderBottom: "1px solid #eee",
+                  background: "#f7f9fb",
+                  
+                }}
+              >
+                Friend Requests
+              </div>
 
-            {pending.length === 0 ? (
-              <div style={{ padding: 12, color: "#666" }}>No pending requests</div>
-            ) : (
-              pending.map((req) => {
-                const s = senders[req.fromId] || {};
-                return (
-                  <div
-                    key={req.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "10px 12px",
-                      borderBottom: "1px solid #f0f0f0",
-                    }}
-                  >
-                    <img
-                      src={s.photo || "https://i.imgur.com/qzsiOuh.png"}
-                      alt="sender"
+              {pending.length === 0 ? (
+                <div style={{ padding: 12, color: "#666" }}>No pending requests</div>
+              ) : (
+                pending.map((req) => {
+                  const s = senders[req.fromId] || {};
+                  return (
+                    <div
+                      key={req.id}
                       style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: "50%",
-                        objectFit: "cover",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 12px",
+                        borderBottom: "1px solid #f0f0f0",
                       }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>
-                        {s.firstName} {s.lastName}
+                    >
+                      <img
+                        src={s.photo || "https://i.imgur.com/qzsiOuh.png"}
+                        alt="sender"
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: "50%",
+                          objectFit: "cover",
+                        }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>
+                          {s.firstName} {s.lastName}
+                        </div>
+                        {s.email && (
+                          <div style={{ fontSize: 12, color: "#666" }}>{s.email}</div>
+                        )}
                       </div>
-                      {s.email && (
-                        <div style={{ fontSize: 12, color: "#666" }}>{s.email}</div>
-                      )}
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => handleAccept(req)}
+                          style={{
+                            background: "#27D496",
+                            color: "#052023",
+                            border: "none",
+                            padding: "6px 8px",
+                            borderRadius: 6,
+                            cursor: "pointer",
+                            fontWeight: 700,
+                            fontSize: 12,
+                          }}
+                        >
+                          Accept
+                        </button>
+                        <button
+                          onClick={() => handleDecline(req)}
+                          style={{
+                            background: "#eee",
+                            color: "#333",
+                            border: "1px solid #ddd",
+                            padding: "6px 8px",
+                            borderRadius: 6,
+                            cursor: "pointer",
+                            fontSize: 12,
+                          }}
+                        >
+                          Decline
+                        </button>
+                      </div>
                     </div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button
-                        onClick={() => handleAccept(req)}
-                        style={{
-                          background: "#27D496",
-                          color: "#052023",
-                          border: "none",
-                          padding: "6px 8px",
-                          borderRadius: 6,
-                          cursor: "pointer",
-                          fontWeight: 700,
-                          fontSize: 12,
-                        }}
-                      >
-                        Accept
-                      </button>
-                      <button
-                        onClick={() => handleDecline(req.id)}
-                        style={{
-                          background: "#eee",
-                          color: "#333",
-                          border: "1px solid #ddd",
-                          padding: "6px 8px",
-                          borderRadius: 6,
-                          cursor: "pointer",
-                          fontSize: 12,
-                        }}
-                      >
-                        Decline
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Brand */}
