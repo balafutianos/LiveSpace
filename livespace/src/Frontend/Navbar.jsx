@@ -1,5 +1,6 @@
 // Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   collection,
   doc,
@@ -13,6 +14,10 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 
+const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
+const FIREBASE_DEFAULT_IMAGE =
+  "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
+
 export default function Navbar({
   currentUserId,
   searchTerm = "",
@@ -24,9 +29,35 @@ export default function Navbar({
   const [senders, setSenders] = useState({});   // fromId -> user data
   const [openReq, setOpenReq] = useState(false);
 
-  const reqWrapRef = useRef(null); // wraps the button + dropdown
+  const [myPhoto, setMyPhoto] = useState(FALLBACK_IMAGE);
 
+  const reqWrapRef = useRef(null); // wraps the Requests button + dropdown
   const pendingCount = pending.length;
+
+  // Fetch my avatar
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!currentUserId) return;
+      try {
+        const snap = await getDoc(doc(db, "Users", currentUserId));
+        if (!alive) return;
+        if (snap.exists()) {
+          const d = snap.data();
+          const photo =
+            !d.photo || d.photo === "" || d.photo === FIREBASE_DEFAULT_IMAGE
+              ? FALLBACK_IMAGE
+              : d.photo;
+          setMyPhoto(photo);
+        } else {
+          setMyPhoto(FALLBACK_IMAGE);
+        }
+      } catch {
+        setMyPhoto(FALLBACK_IMAGE);
+      }
+    })();
+    return () => { alive = false; };
+  }, [currentUserId]);
 
   // Close dropdown on outside click / Esc
   useEffect(() => {
@@ -59,13 +90,12 @@ export default function Navbar({
       const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setPending(rows);
 
-      // fetch sender data
+      // fetch sender data (avatars, names)
       const ids = [...new Set(rows.map((r) => r.fromId))];
       const map = {};
       await Promise.all(
         ids.map(async (uid) => {
-          const uref = doc(db, "Users", uid);
-          const u = await getDoc(uref);
+          const u = await getDoc(doc(db, "Users", uid));
           if (u.exists()) {
             const d = u.data();
             map[uid] = {
@@ -73,19 +103,12 @@ export default function Navbar({
               lastName: d.lastName || "",
               email: d.email || "",
               photo:
-                !d.photo ||
-                d.photo === "" ||
-                d.photo?.includes("defaultavatar.jpg")
-                  ? "https://i.imgur.com/qzsiOuh.png"
+                !d.photo || d.photo === "" || d.photo?.includes("defaultavatar.jpg")
+                  ? FALLBACK_IMAGE
                   : d.photo,
             };
           } else {
-            map[uid] = {
-              firstName: "",
-              lastName: "",
-              email: "",
-              photo: "https://i.imgur.com/qzsiOuh.png",
-            };
+            map[uid] = { firstName: "", lastName: "", email: "", photo: FALLBACK_IMAGE };
           }
         })
       );
@@ -96,21 +119,18 @@ export default function Navbar({
 
   const handleAccept = async (req) => {
     try {
-      // mark request accepted
       await updateDoc(doc(db, "FriendRequests", req.id), {
         status: "accepted",
         respondedAt: serverTimestamp(),
       });
-      // create/merge friendship pair
       const [a, b] = [req.fromId, req.toId].sort();
-      const pairId = `${a}_${b}`;
       await setDoc(
-        doc(db, "Friends", pairId),
+        doc(db, "Friends", `${a}_${b}`),
         { userIds: [a, b], createdAt: serverTimestamp() },
         { merge: true }
       );
     } catch (e) {
-      console.error("Accept error:", e);
+      console.error("Accept error details:", e?.code, e?.message);
       alert(`Could not accept: ${e?.code || ""} ${e?.message || ""}`);
     }
   };
@@ -144,7 +164,7 @@ export default function Navbar({
         position: "relative",
       }}
     >
-      {/* Requests button (top-left, anchored) */}
+      {/* Requests button (top-left) */}
       <div style={{ position: "absolute", left: 16, top: 10 }}>
         <div ref={reqWrapRef} style={{ position: "relative", display: "inline-block" }}>
           <button
@@ -160,7 +180,7 @@ export default function Navbar({
               display: "flex",
               alignItems: "center",
               gap: 8,
-              marginTop:"32px",
+              marginTop:"33px"
             }}
           >
             <span style={{ fontSize: 16 }}>🔔</span>
@@ -192,7 +212,7 @@ export default function Navbar({
             <div
               style={{
                 position: "absolute",
-                top: "calc(100% + 8px)", // <- directly below button
+                top: "calc(100% + 8px)",
                 left: 0,
                 width: 340,
                 background: "#fff",
@@ -201,7 +221,6 @@ export default function Navbar({
                 boxShadow: "0 12px 24px rgba(0,0,0,0.25)",
                 zIndex: 10000,
                 overflow: "hidden",
-                
               }}
             >
               <div
@@ -210,7 +229,6 @@ export default function Navbar({
                   fontWeight: 700,
                   borderBottom: "1px solid #eee",
                   background: "#f7f9fb",
-                  
                 }}
               >
                 Friend Requests
@@ -233,22 +251,15 @@ export default function Navbar({
                       }}
                     >
                       <img
-                        src={s.photo || "https://i.imgur.com/qzsiOuh.png"}
+                        src={s.photo || FALLBACK_IMAGE}
                         alt="sender"
-                        style={{
-                          width: 36,
-                          height: 36,
-                          borderRadius: "50%",
-                          objectFit: "cover",
-                        }}
+                        style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }}
                       />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>
                           {s.firstName} {s.lastName}
                         </div>
-                        {s.email && (
-                          <div style={{ fontSize: 12, color: "#666" }}>{s.email}</div>
-                        )}
+                        {s.email && <div style={{ fontSize: 12, color: "#666" }}>{s.email}</div>}
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
@@ -302,14 +313,48 @@ export default function Navbar({
         LiveSpaceZone
       </div>
 
+      {/* My profile (top-right) */}
+      {currentUserId && (
+        <div style={{ position: "absolute", right: 16, top: 10 }}>
+          <Link
+            to={`/profile/${currentUserId}`}  // or just "/profile" if your route supports it
+            title="Go to my profile"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              borderRadius: 20,
+              border: "1px solid rgba(255,255,255,0.25)",
+              color: "#fff",
+              textDecoration: "none",
+              background: "transparent",
+              marginTop: "33px",
+              marginRight: "102px"
+            }}
+          >
+            <img
+              src={myPhoto}
+              alt="Me"
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: "50%",
+                objectFit: "cover",
+                border: "2px solid rgba(255,255,255,0.2)",
+              }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>My profile</span>
+          </Link>
+        </div>
+      )}
+
       {/* Search */}
       <div style={{ display: "flex", gap: 8, position: "relative", width: "100%", maxWidth: 420 }}>
         <input
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleSearch();
-          }}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
           placeholder="Search by name or email..."
           style={{
             padding: "8px 12px",
@@ -365,14 +410,9 @@ export default function Navbar({
                 }}
               >
                 <img
-                  src={u.photo || "https://i.imgur.com/qzsiOuh.png"}
+                  src={u.photo || FALLBACK_IMAGE}
                   alt="user"
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: "50%",
-                    objectFit: "cover",
-                  }}
+                  style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }}
                 />
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>
