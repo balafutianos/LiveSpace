@@ -27,6 +27,10 @@ import Likefeature from "./Likefeature";
 import FriendButton from "./FriendButton";
 import FriendInbox from "./FriendInbox";
 
+// OPTIONAL (make sure these files exist; otherwise comment out):
+import NotificationBell from "./NotificationBell";
+import NotifyButton from "./NotifyButton";
+
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER =
   "https://img.freepik.com/free-photo/gray-abstract-wireframe-technology-background_53876-101941.jpg?semt=ais_hybrid&w=740";
@@ -38,36 +42,137 @@ function capitalize(word) {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
-// --- Link helpers (YouTube) ---
+/* -------------------- Link helpers -------------------- */
+// Detect first URL in a string
+function findFirstUrl(text = "") {
+  const m = text.match(/https?:\/\/[^\s<>"')]+/i);
+  return m ? m[0] : null;
+}
+// Render text with http(s) links turned into <a>
+function renderTextWithLinks(text = "") {
+  const urlRe = /(https?:\/\/[^\s<>"')]+)/gi;
+  const parts = text.split(urlRe);
+  return parts.map((part, i) => {
+    const isUrl = i % 2 === 1;
+    if (!isUrl) return <React.Fragment key={i}>{part}</React.Fragment>;
+    return (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ color: "#1a73e8", textDecoration: "underline" }}
+      >
+        {part}
+      </a>
+    );
+  });
+}
+
+/* -------------------- YouTube helpers -------------------- */
+// Extract yt id (supports watch?v=, youtu.be/, embed/)
 function extractYouTubeId(url = "") {
   try {
-    // youtu.be/<id>
     const short = url.match(/https?:\/\/(?:www\.)?youtu\.be\/([A-Za-z0-9_-]{6,})/i);
     if (short) return short[1];
-
-    // youtube.com/watch?v=<id>
     const watch = url.match(/[?&]v=([A-Za-z0-9_-]{6,})/i);
     if (watch) return watch[1];
-
-    // youtube.com/embed/<id>
     const embed = url.match(/https?:\/\/(?:www\.)?youtube\.com\/embed\/([A-Za-z0-9_-]{6,})/i);
     if (embed) return embed[1];
-
     return null;
   } catch {
     return null;
   }
 }
-
-function findFirstUrl(text = "") {
-  const m = text.match(/https?:\/\/[^\s<>")]+/i);
-  return m ? m[0] : null;
+// oEmbed for title + thumbnail (no API key)
+async function fetchYouTubeMeta(url) {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`
+    );
+    if (!res.ok) return null;
+    return await res.json(); // { title, thumbnail_url, ... }
+  } catch {
+    return null;
+  }
 }
 
-function getYouTubeThumbUrl(id) {
-  // hqdefault is reliable
-  return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+/* -------------------- Notifications helpers -------------------- */
+// Is viewer friends with profile user?
+async function areWeFriends(viewerId, profileId) {
+  const frRef = collection(db, "FriendRequests");
+  const [a, b] = await Promise.all([
+    getDocs(query(frRef, where("fromId", "==", viewerId), where("toId", "==", profileId), where("status", "==", "accepted"))),
+    getDocs(query(frRef, where("fromId", "==", profileId), where("toId", "==", viewerId), where("status", "==", "accepted")))
+  ]);
+  return a.size > 0 || b.size > 0;
 }
+
+// Get actor display info (full name + photo) from Users
+async function getActorInfo(uid) {
+  const snap = await getDoc(doc(db, "Users", uid));
+  if (!snap.exists()) return { name: "Someone", photo: FALLBACK_IMAGE };
+
+  const u = snap.data();
+  const firstName = u.firstName || "";
+  const lastName = u.lastName || "";
+  const name = `${firstName} ${lastName}`.trim() || (u.email || "Someone");
+  const photo = u.photo || FALLBACK_IMAGE;
+
+  return { name, photo };
+}
+
+
+// Get accepted friend IDs of a user
+async function getFriendIds(uid) {
+  const frRef = collection(db, "FriendRequests");
+  const [fromAcc, toAcc] = await Promise.all([
+    getDocs(query(frRef, where("fromId", "==", uid), where("status", "==", "accepted"))),
+    getDocs(query(frRef, where("toId", "==", uid), where("status", "==", "accepted")))
+  ]);
+  const ids = new Set();
+  fromAcc.forEach(d => ids.add(d.data().toId));
+  toAcc.forEach(d => ids.add(d.data().fromId));
+  return [...ids];
+}
+// Check subscriber preference (default ON if no doc)
+async function shouldNotify(subscriberId, publisherId) {
+  try {
+    const snap = await getDoc(doc(db, "NotificationPrefs", `${subscriberId}__${publisherId}`));
+    if (!snap.exists()) return true;
+    return !!snap.data().enabled;
+  } catch {
+    return false;
+  }
+}
+// Create notifications for friends who opted in
+async function notifyFriendsOf(publisherId, payload) {
+  try {
+    const friends = await getFriendIds(publisherId);
+    const actor = await getActorInfo(publisherId);
+
+    await Promise.all(
+      friends.map(async (fid) => {
+        if (!(await shouldNotify(fid, publisherId))) return;
+
+        await addDoc(collection(db, "Notifications"), {
+          recipientId: fid,
+          actorId: publisherId,
+          actorName: actor.name,       // 👈 full name from Users
+          actorPhoto: actor.photo,
+          type: payload.type,          // 'post' | 'like'
+          postId: payload.postId || "",
+          text: payload.text || "",
+          createdAt: serverTimestamp(),
+          read: false
+        });
+      })
+    );
+  } catch (e) {
+    console.error("notifyFriendsOf error:", e);
+  }
+}
+
 
 export default function Profile() {
   const navigate = useNavigate();
@@ -105,13 +210,14 @@ export default function Profile() {
 
   // Friends
   const [friendCount, setFriendCount] = useState(0);
+  const [isFriends, setIsFriends] = useState(false);
   const isOwnProfile = useMemo(
     () => auth.currentUser?.uid && viewingUserId && auth.currentUser.uid === viewingUserId,
     [viewingUserId, auth.currentUser?.uid]
   );
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
-  // --- Auth + route handling ---
+  /* ---------- Auth + routing ---------- */
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user) {
@@ -141,7 +247,7 @@ export default function Profile() {
         const userRef = doc(db, "Users", viewingUserId);
         const snap = await getDoc(userRef);
 
-        // If we are on our own profile and the doc doesn't exist, create skeleton
+        // Create skeleton doc for own profile if missing
         if (!snap.exists() && auth.currentUser?.uid === viewingUserId) {
           await setDoc(
             userRef,
@@ -208,57 +314,66 @@ export default function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingUserId]);
 
-
-async function fetchYouTubeMeta(url) {
-  try {
-    const res = await fetch(
-      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`
-    );
-    if (!res.ok) return null;
-    return await res.json(); // contains title, author_name, thumbnail_url
-  } catch {
-    return null;
-  }
-}
-
-
-
-
-  // --- Helpers ---
- const fetchPosts = async (uid) => {
-  if (!uid) return;
-  try {
-    const qy = query(
-      collection(db, "Posts"),
-      where("userId", "==", uid),
-      orderBy("createdAt", "desc")
-    );
-    const snap = await getDocs(qy);
-    const loaded = await Promise.all(
-  snap.docs.map(async (d) => {
-    const post = { id: d.id, ...d.data() };
-
-    const url = findFirstUrl(post.text || "");
-    if (url && (url.includes("youtube.com") || url.includes("youtu.be"))) {
-      const meta = await fetchYouTubeMeta(url);
-      if (meta) {
-        post.youtubeMeta = {
-          url,
-          title: meta.title,
-          thumbnail: meta.thumbnail_url,
-        };
+  // Track if viewer and profile user are friends (for Notify toggle)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!auth.currentUser?.uid || !viewingUserId || auth.currentUser.uid === viewingUserId) {
+        if (alive) setIsFriends(false);
+        return;
       }
+      const yes = await areWeFriends(auth.currentUser.uid, viewingUserId);
+      if (alive) setIsFriends(yes);
+    })();
+    return () => { alive = false; };
+  }, [auth.currentUser?.uid, viewingUserId]);
+
+  /* ---------- Fetch posts with YouTube metadata ---------- */
+  const fetchPosts = async (uid) => {
+    if (!uid) return;
+    try {
+      const qy = query(
+        collection(db, "Posts"),
+        where("userId", "==", uid),
+        orderBy("createdAt", "desc")
+      );
+      const snap = await getDocs(qy);
+
+      const loaded = await Promise.all(
+        snap.docs.map(async (d) => {
+          const post = { id: d.id, ...d.data() };
+          const url = findFirstUrl(post.text || "");
+
+          if (url && (url.includes("youtube.com") || url.includes("youtu.be"))) {
+            const meta = await fetchYouTubeMeta(url);
+            if (meta) {
+              post.youtubeMeta = {
+                url,
+                title: meta.title,
+                thumbnail: meta.thumbnail_url
+              };
+            } else {
+              // Fallback: if we can extract an id, show thumbnail only
+              const ytId = extractYouTubeId(url);
+              if (ytId) {
+                post.youtubeMeta = {
+                  url,
+                  title: "YouTube video",
+                  thumbnail: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`
+                };
+              }
+            }
+          }
+
+          return post;
+        })
+      );
+
+      setPosts(loaded.filter((p) => p.text || p.image));
+    } catch (err) {
+      console.error("Error fetching posts:", err);
     }
-    return post;
-  })
-);
-
-    setPosts(loaded.filter((p) => p.text || p.image));
-  } catch (err) {
-    console.error("Error fetching posts:", err);
-  }
-};
-
+  };
 
   async function refreshFriendCount(uid) {
     try {
@@ -275,7 +390,7 @@ async function fetchYouTubeMeta(url) {
     }
   }
 
-  // --- Uploads (only allow on own profile) ---
+  /* ---------- Uploads (own profile only) ---------- */
   const handleUploadProfile = async (file) => {
     if (!file || !auth.currentUser || !isOwnProfile) return;
     try {
@@ -302,7 +417,7 @@ async function fetchYouTubeMeta(url) {
     }
   };
 
-  // --- Posts (can only create on own profile) ---
+  /* ---------- Posts (create/delete) ---------- */
   const handleCreatePost = async () => {
     if (!auth.currentUser || !isOwnProfile) return;
     try {
@@ -312,13 +427,24 @@ async function fetchYouTubeMeta(url) {
         await uploadBytes(imageRef, postImage);
         imageUrl = await getDownloadURL(imageRef);
       }
-      await addDoc(collection(db, "Posts"), {
+
+      // Use explicit doc ref to get the id for notifications
+      const newRef = doc(collection(db, "Posts"));
+      await setDoc(newRef, {
         userId: auth.currentUser.uid,
-        text: postText.trim(),
+        text: (postText || "").trim(),
         image: imageUrl,
         createdAt: new Date(),
         likes: []
       });
+
+      // Notify friends about the new post
+      await notifyFriendsOf(auth.currentUser.uid, {
+        type: "post",
+        postId: newRef.id,
+        text: (postText || "").trim()
+      });
+
       setPostText("");
       setPostImage(null);
       await fetchPosts(auth.currentUser.uid);
@@ -339,7 +465,7 @@ async function fetchYouTubeMeta(url) {
     }
   };
 
-  // --- Search (Navbar) ---
+  /* ---------- Search (Navbar) ---------- */
   const handleSearch = async () => {
     const raw = (searchTerm || "").trim();
     if (!raw) {
@@ -347,7 +473,6 @@ async function fetchYouTubeMeta(url) {
       return;
     }
     try {
-      // email exact
       if (raw.includes("@")) {
         const qEmail = query(collection(db, "Users"), where("email", "==", raw));
         const sEmail = await getDocs(qEmail);
@@ -404,7 +529,7 @@ async function fetchYouTubeMeta(url) {
     }
   };
 
-  // --- Save/Cancel profile (own profile only) ---
+  /* ---------- Save/Cancel profile (own profile only) ---------- */
   const handleSaveProfile = async () => {
     if (!auth.currentUser || !isOwnProfile) return;
     try {
@@ -452,28 +577,6 @@ async function fetchYouTubeMeta(url) {
   if (loading) return <div>Loading...</div>;
 
   const totalLikes = posts.reduce((acc, post) => acc + (post.likes?.length || 0), 0);
-// Turn any http(s)://... in text into <a> links
-function renderTextWithLinks(text = "") {
-  const urlRe = /(https?:\/\/[^\s<>"')]+)/gi; // capture URLs
-  const parts = text.split(urlRe);            // split, keeping URLs as items
-
-  return parts.map((part, i) => {
-    const isUrl = i % 2 === 1; // captured groups end up at odd indexes
-    if (!isUrl) return <React.Fragment key={i}>{part}</React.Fragment>;
-
-    return (
-      <a
-        key={i}
-        href={part}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ color: "#1a73e8", textDecoration: "underline" }}
-      >
-        {part}
-      </a>
-    );
-  });
-}
 
   return (
     <div style={{ maxWidth: "1000px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
@@ -483,7 +586,15 @@ function renderTextWithLinks(text = "") {
         setSearchTerm={setSearchTerm}
         handleSearch={handleSearch}
         searchResults={searchResults}
+        // If your Navbar supports slots, place the bell there instead.
       />
+      
+      {/* Quick place for the bell */}
+      {auth.currentUser?.uid && (
+        <div style={{ position: "fixed", top: 10, right: 12, zIndex: 1000, marginRight: 1203, marginTop: 32 }}>
+          <NotificationBell currentUserId={auth.currentUser.uid} />
+        </div>
+      )}
 
       {/* Cover + Avatar */}
       <div style={{ position: "relative", marginBottom: "40px" }}>
@@ -571,11 +682,18 @@ function renderTextWithLinks(text = "") {
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
             {!isOwnProfile && auth.currentUser?.uid && viewingUserId && (
-              <FriendButton
-                viewerId={auth.currentUser.uid}
-                profileUserId={viewingUserId}
-                onChanged={() => refreshFriendCount(viewingUserId)}
-              />
+              <>
+                <FriendButton
+                  viewerId={auth.currentUser.uid}
+                  profileUserId={viewingUserId}
+                  onChanged={() => refreshFriendCount(viewingUserId)}
+                />
+                <NotifyButton
+                  currentUserId={auth.currentUser.uid}
+                  profileUserId={viewingUserId}
+                  isFriends={isFriends}
+                />
+              </>
             )}
 
             {isOwnProfile && (
@@ -652,6 +770,8 @@ function renderTextWithLinks(text = "") {
         canEdit={auth.currentUser?.uid === viewingUserId}
       />
 
+      
+
       {/* Posts */}
       <div style={{ marginTop: "40px", paddingLeft: "24px", paddingRight: "24px", paddingBottom: "60px" }}>
         {isOwnProfile && (
@@ -688,11 +808,10 @@ function renderTextWithLinks(text = "") {
               style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px" }}
             >
               {post.text && (
-  <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-    {renderTextWithLinks(post.text)}
-  </p>
-)}
-
+                <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+                  {renderTextWithLinks(post.text)}
+                </p>
+              )}
 
               {/* Uploaded image */}
               {post.image && (
@@ -703,39 +822,37 @@ function renderTextWithLinks(text = "") {
                 />
               )}
 
-              {/* YouTube thumbnail preview (only if no uploaded image) */}
-              {/* YouTube preview card */}
-{/* YouTube preview card */}
-{post.youtubeMeta && !post.image && (
-  <a
-    href={post.youtubeMeta.url}
-    target="_blank"
-    rel="noopener noreferrer"
-    style={{
-      display: "block",
-      border: "1px solid #ccc",
-      borderRadius: "6px",
-      overflow: "hidden",
-      marginTop: 8,
-      textDecoration: "none",
-      color: "inherit"
-    }}
-  >
-    <img
-      src={post.youtubeMeta.thumbnail}
-      alt="YouTube thumbnail"
-      style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
-    />
-    <div style={{ padding: "8px", background: "#f9f9f9" }}>
-      <small style={{ color: "#555" }}>YOUTUBE.COM</small>
-      <div style={{ fontWeight: "bold", marginTop: "4px" }}>
-        {post.youtubeMeta.title}
-      </div>
-    </div>
-  </a>
-)}
-
-
+              {/* YouTube preview card (only if no uploaded image) */}
+              {post.youtubeMeta && !post.image && (
+                <a
+                  href={post.youtubeMeta.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "block",
+                    border: "1px solid #ccc",
+                    borderRadius: "6px",
+                    overflow: "hidden",
+                    marginTop: 8,
+                    textDecoration: "none",
+                    color: "inherit"
+                  }}
+                  title="Open on YouTube"
+                >
+                  <img
+                    src={post.youtubeMeta.thumbnail}
+                    alt="YouTube thumbnail"
+                    style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
+                    loading="lazy"
+                  />
+                  <div style={{ padding: "8px", background: "#f9f9f9" }}>
+                    <small style={{ color: "#555" }}>YOUTUBE.COM</small>
+                    <div style={{ fontWeight: "bold", marginTop: "4px" }}>
+                      {post.youtubeMeta.title}
+                    </div>
+                  </div>
+                </a>
+              )}
 
               <small style={{ color: "#555", display: "block", marginTop: 8 }}>
                 Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
@@ -746,9 +863,20 @@ function renderTextWithLinks(text = "") {
                   postId={post.id}
                   likes={post.likes || []}
                   currentUserId={auth.currentUser?.uid}
-                  onChange={(newLikes) =>
-                    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p)))
-                  }
+                  onChange={async (newLikes) => {
+                    // Update local state
+                    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p)));
+
+                    // Notify friends that *I* liked a post (optional)
+                    const me = auth.currentUser?.uid;
+                    if (me) {
+                      const wasLiked = (post.likes || []).includes(me);
+                      const isLiked = (newLikes || []).includes(me);
+                      if (!wasLiked && isLiked) {
+                        await notifyFriendsOf(me, { type: "like", postId: post.id, text: "liked a post" });
+                      }
+                    }
+                  }}
                 />
               </div>
 
@@ -766,5 +894,4 @@ function renderTextWithLinks(text = "") {
       </div>
     </div>
   );
-
 }
