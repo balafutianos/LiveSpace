@@ -38,6 +38,37 @@ function capitalize(word) {
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
+// --- Link helpers (YouTube) ---
+function extractYouTubeId(url = "") {
+  try {
+    // youtu.be/<id>
+    const short = url.match(/https?:\/\/(?:www\.)?youtu\.be\/([A-Za-z0-9_-]{6,})/i);
+    if (short) return short[1];
+
+    // youtube.com/watch?v=<id>
+    const watch = url.match(/[?&]v=([A-Za-z0-9_-]{6,})/i);
+    if (watch) return watch[1];
+
+    // youtube.com/embed/<id>
+    const embed = url.match(/https?:\/\/(?:www\.)?youtube\.com\/embed\/([A-Za-z0-9_-]{6,})/i);
+    if (embed) return embed[1];
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function findFirstUrl(text = "") {
+  const m = text.match(/https?:\/\/[^\s<>")]+/i);
+  return m ? m[0] : null;
+}
+
+function getYouTubeThumbUrl(id) {
+  // hqdefault is reliable
+  return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+}
+
 export default function Profile() {
   const navigate = useNavigate();
   const params = useParams(); // expects optional :uid
@@ -177,24 +208,57 @@ export default function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingUserId]);
 
+
+async function fetchYouTubeMeta(url) {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`
+    );
+    if (!res.ok) return null;
+    return await res.json(); // contains title, author_name, thumbnail_url
+  } catch {
+    return null;
+  }
+}
+
+
+
+
   // --- Helpers ---
-  const fetchPosts = async (uid) => {
-    if (!uid) return;
-    try {
-      const qy = query(
-        collection(db, "Posts"),
-        where("userId", "==", uid),
-        orderBy("createdAt", "desc")
-      );
-      const snap = await getDocs(qy);
-      const loaded = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((p) => p.text || p.image);
-      setPosts(loaded);
-    } catch (err) {
-      console.error("Error fetching posts:", err);
+ const fetchPosts = async (uid) => {
+  if (!uid) return;
+  try {
+    const qy = query(
+      collection(db, "Posts"),
+      where("userId", "==", uid),
+      orderBy("createdAt", "desc")
+    );
+    const snap = await getDocs(qy);
+    const loaded = await Promise.all(
+  snap.docs.map(async (d) => {
+    const post = { id: d.id, ...d.data() };
+
+    const url = findFirstUrl(post.text || "");
+    if (url && (url.includes("youtube.com") || url.includes("youtu.be"))) {
+      const meta = await fetchYouTubeMeta(url);
+      if (meta) {
+        post.youtubeMeta = {
+          url,
+          title: meta.title,
+          thumbnail: meta.thumbnail_url,
+        };
+      }
     }
-  };
+    return post;
+  })
+);
+
+    setPosts(loaded.filter((p) => p.text || p.image));
+  } catch (err) {
+    console.error("Error fetching posts:", err);
+  }
+};
+
 
   async function refreshFriendCount(uid) {
     try {
@@ -388,6 +452,28 @@ export default function Profile() {
   if (loading) return <div>Loading...</div>;
 
   const totalLikes = posts.reduce((acc, post) => acc + (post.likes?.length || 0), 0);
+// Turn any http(s)://... in text into <a> links
+function renderTextWithLinks(text = "") {
+  const urlRe = /(https?:\/\/[^\s<>"')]+)/gi; // capture URLs
+  const parts = text.split(urlRe);            // split, keeping URLs as items
+
+  return parts.map((part, i) => {
+    const isUrl = i % 2 === 1; // captured groups end up at odd indexes
+    if (!isUrl) return <React.Fragment key={i}>{part}</React.Fragment>;
+
+    return (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ color: "#1a73e8", textDecoration: "underline" }}
+      >
+        {part}
+      </a>
+    );
+  });
+}
 
   return (
     <div style={{ maxWidth: "1000px", margin: "0 auto", fontFamily: "Arial, sans-serif" }}>
@@ -554,16 +640,17 @@ export default function Profile() {
 
       {/* Profile Info card */}
       <ProfileInfo
-  userData={userData}
-  editing={editing}
-  profileForm={profileForm}
-  setProfileForm={setProfileForm}
-  setEditing={setEditing}
-  handleSaveProfile={handleSaveProfile}
-  handleCancelEdit={handleCancelEdit}
-  profileUserId={viewingUserId}   // <-- add this
-/>
-
+        userData={userData}
+        editing={editing}
+        profileForm={profileForm}
+        setProfileForm={setProfileForm}
+        // prevent visitors from flipping edit mode
+        setEditing={(v) => { if (auth.currentUser?.uid === viewingUserId) setEditing(v); }}
+        handleSaveProfile={handleSaveProfile}
+        handleCancelEdit={handleCancelEdit}
+        profileUserId={viewingUserId}
+        canEdit={auth.currentUser?.uid === viewingUserId}
+      />
 
       {/* Posts */}
       <div style={{ marginTop: "40px", paddingLeft: "24px", paddingRight: "24px", paddingBottom: "60px" }}>
@@ -600,7 +687,14 @@ export default function Profile() {
               key={post.id}
               style={{ border: "1px solid #ccc", padding: "10px", marginTop: "10px" }}
             >
-              {post.text && <p>{post.text}</p>}
+              {post.text && (
+  <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+    {renderTextWithLinks(post.text)}
+  </p>
+)}
+
+
+              {/* Uploaded image */}
               {post.image && (
                 <img
                   src={post.image}
@@ -608,9 +702,45 @@ export default function Profile() {
                   style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
                 />
               )}
+
+              {/* YouTube thumbnail preview (only if no uploaded image) */}
+              {/* YouTube preview card */}
+{/* YouTube preview card */}
+{post.youtubeMeta && !post.image && (
+  <a
+    href={post.youtubeMeta.url}
+    target="_blank"
+    rel="noopener noreferrer"
+    style={{
+      display: "block",
+      border: "1px solid #ccc",
+      borderRadius: "6px",
+      overflow: "hidden",
+      marginTop: 8,
+      textDecoration: "none",
+      color: "inherit"
+    }}
+  >
+    <img
+      src={post.youtubeMeta.thumbnail}
+      alt="YouTube thumbnail"
+      style={{ width: "100%", maxHeight: "360px", objectFit: "cover" }}
+    />
+    <div style={{ padding: "8px", background: "#f9f9f9" }}>
+      <small style={{ color: "#555" }}>YOUTUBE.COM</small>
+      <div style={{ fontWeight: "bold", marginTop: "4px" }}>
+        {post.youtubeMeta.title}
+      </div>
+    </div>
+  </a>
+)}
+
+
+
               <small style={{ color: "#555", display: "block", marginTop: 8 }}>
                 Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
               </small>
+
               <div style={{ marginTop: 8 }}>
                 <Likefeature
                   postId={post.id}
@@ -621,6 +751,7 @@ export default function Profile() {
                   }
                 />
               </div>
+
               {post.userId === auth.currentUser?.uid && (
                 <button
                   onClick={() => handleDeletePost(post.id)}
@@ -635,4 +766,5 @@ export default function Profile() {
       </div>
     </div>
   );
+
 }
