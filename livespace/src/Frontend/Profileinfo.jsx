@@ -1,6 +1,7 @@
 // ProfileInfo.jsx
 import React from "react";
 import FriendList from "./FriendList";
+import PhotoGrid from "./PhotoGrid";
 
 function ProfileInfo({
   userData,
@@ -8,17 +9,14 @@ function ProfileInfo({
   profileForm,
   setProfileForm,
   setEditing,
-  canEdit = false, 
+  canEdit = false,
   handleSaveProfile,
   handleCancelEdit,
   profileUserId
 }) {
-  const isEditing = Boolean(editing && canEdit);
-  const guardSetEditing = (v) => { if (canEdit) setEditing(v); };
-
   return (
     <div style={{ display: "flex", marginTop: "70px", padding: "0 24px", gap: "24px" }}>
-      {/* Left Section: Profile Card */}
+      {/* Left: Profile Card */}
       <div style={{ flex: 2 }}>
         <div
           style={{
@@ -33,14 +31,13 @@ function ProfileInfo({
           {/* Header */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h2 style={{ margin: 0, fontSize: "20px", color: "#222" }}>Profile Card</h2>
-
-            {/* Only owner sees edit controls */}
-            {canEdit && !isEditing && (
-              <button onClick={() => guardSetEditing(true)} style={{ padding: "6px 10px", fontSize: "13px" }}>
-                Edit Profile
-              </button>
-            )}
-            {canEdit && isEditing && (
+            {!editing ? (
+              canEdit && (
+                <button onClick={() => setEditing(true)} style={{ padding: "6px 10px", fontSize: "13px" }}>
+                  Edit Profile
+                </button>
+              )
+            ) : (
               <>
                 <button
                   onClick={handleSaveProfile}
@@ -48,10 +45,7 @@ function ProfileInfo({
                 >
                   Save
                 </button>
-                <button
-                  onClick={handleCancelEdit}
-                  style={{ padding: "6px 10px", fontSize: "13px" }}
-                >
+                <button onClick={handleCancelEdit} style={{ padding: "6px 10px", fontSize: "13px" }}>
                   Cancel
                 </button>
               </>
@@ -73,7 +67,7 @@ function ProfileInfo({
               {["phone", "sex", "birthday", "work"].map((field) => (
                 <div style={{ marginBottom: 10 }} key={field}>
                   <label style={{ fontWeight: "bold", textTransform: "capitalize" }}>{field}</label>
-                  {isEditing ? (
+                  {editing ? (
                     field === "sex" ? (
                       <select
                         value={profileForm.sex}
@@ -104,7 +98,7 @@ function ProfileInfo({
             <div>
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontWeight: "bold" }}>City</label>
-                {isEditing ? (
+                {editing ? (
                   <input
                     value={profileForm.city}
                     onChange={(e) => setProfileForm({ ...profileForm, city: e.target.value })}
@@ -128,7 +122,7 @@ function ProfileInfo({
 
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontWeight: "bold" }}>About me</label>
-                {isEditing ? (
+                {editing ? (
                   <textarea
                     value={profileForm.about}
                     onChange={(e) => setProfileForm({ ...profileForm, about: e.target.value })}
@@ -144,7 +138,7 @@ function ProfileInfo({
 
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontWeight: "bold" }}>Email</label>
-                {isEditing ? (
+                {editing ? (
                   <input
                     value={profileForm.email}
                     onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
@@ -171,7 +165,7 @@ function ProfileInfo({
         </div>
       </div>
 
-      {/* Right Section: Friends grid */}
+      {/* Right: Friends + Photos */}
       <div style={{ flex: 1 }}>
         <div
           style={{
@@ -185,6 +179,9 @@ function ProfileInfo({
           <h4 style={{ marginTop: 0 }}>Friends</h4>
           <FriendList userId={profileUserId} max={12} />
         </div>
+
+        {/* Photos box (new) */}
+        <PhotoGrid userId={profileUserId} max={12} />
       </div>
     </div>
   );
