@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db, storage } from "./firebase";
+
 import {
   doc,
   getDoc,
@@ -16,7 +17,8 @@ import {
   serverTimestamp,
   deleteDoc,
   onSnapshot,
-  getCountFromServer
+  getCountFromServer,
+  limit
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
@@ -26,10 +28,7 @@ import ProfileInfo from "./ProfileInfo";
 import Likefeature from "./Likefeature";
 import FriendButton from "./FriendButton";
 import FriendInbox from "./FriendInbox";
-
-// OPTIONAL (make sure these files exist; otherwise comment out):
-import NotificationBell from "./NotificationBell";
-import NotifyButton from "./NotifyButton";
+import Comments from "./Comments";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER =
@@ -43,12 +42,10 @@ function capitalize(word) {
 }
 
 /* -------------------- Link helpers -------------------- */
-// Detect first URL in a string
 function findFirstUrl(text = "") {
   const m = text.match(/https?:\/\/[^\s<>"')]+/i);
   return m ? m[0] : null;
 }
-// Render text with http(s) links turned into <a>
 function renderTextWithLinks(text = "") {
   const urlRe = /(https?:\/\/[^\s<>"')]+)/gi;
   const parts = text.split(urlRe);
@@ -70,7 +67,6 @@ function renderTextWithLinks(text = "") {
 }
 
 /* -------------------- YouTube helpers -------------------- */
-// Extract yt id (supports watch?v=, youtu.be/, embed/)
 function extractYouTubeId(url = "") {
   try {
     const short = url.match(/https?:\/\/(?:www\.)?youtu\.be\/([A-Za-z0-9_-]{6,})/i);
@@ -84,31 +80,42 @@ function extractYouTubeId(url = "") {
     return null;
   }
 }
-// oEmbed for title + thumbnail (no API key)
 async function fetchYouTubeMeta(url) {
   try {
     const res = await fetch(
       `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`
     );
     if (!res.ok) return null;
-    return await res.json(); // { title, thumbnail_url, ... }
+    return await res.json();
   } catch {
     return null;
   }
 }
 
 /* -------------------- Notifications helpers -------------------- */
-// Is viewer friends with profile user?
 async function areWeFriends(viewerId, profileId) {
   const frRef = collection(db, "FriendRequests");
   const [a, b] = await Promise.all([
-    getDocs(query(frRef, where("fromId", "==", viewerId), where("toId", "==", profileId), where("status", "==", "accepted"))),
-    getDocs(query(frRef, where("fromId", "==", profileId), where("toId", "==", viewerId), where("status", "==", "accepted")))
+    getDocs(
+      query(
+        frRef,
+        where("fromId", "==", viewerId),
+        where("toId", "==", profileId),
+        where("status", "==", "accepted")
+      )
+    ),
+    getDocs(
+      query(
+        frRef,
+        where("fromId", "==", profileId),
+        where("toId", "==", viewerId),
+        where("status", "==", "accepted")
+      )
+    ),
   ]);
   return a.size > 0 || b.size > 0;
 }
 
-// Get actor display info (full name + photo) from Users
 async function getActorInfo(uid) {
   const snap = await getDoc(doc(db, "Users", uid));
   if (!snap.exists()) return { name: "Someone", photo: FALLBACK_IMAGE };
@@ -122,20 +129,17 @@ async function getActorInfo(uid) {
   return { name, photo };
 }
 
-
-// Get accepted friend IDs of a user
 async function getFriendIds(uid) {
   const frRef = collection(db, "FriendRequests");
   const [fromAcc, toAcc] = await Promise.all([
     getDocs(query(frRef, where("fromId", "==", uid), where("status", "==", "accepted"))),
-    getDocs(query(frRef, where("toId", "==", uid), where("status", "==", "accepted")))
+    getDocs(query(frRef, where("toId", "==", uid), where("status", "==", "accepted"))),
   ]);
   const ids = new Set();
-  fromAcc.forEach(d => ids.add(d.data().toId));
-  toAcc.forEach(d => ids.add(d.data().fromId));
+  fromAcc.forEach((d) => ids.add(d.data().toId));
+  toAcc.forEach((d) => ids.add(d.data().fromId));
   return [...ids];
 }
-// Check subscriber preference (default ON if no doc)
 async function shouldNotify(subscriberId, publisherId) {
   try {
     const snap = await getDoc(doc(db, "NotificationPrefs", `${subscriberId}__${publisherId}`));
@@ -145,7 +149,6 @@ async function shouldNotify(subscriberId, publisherId) {
     return false;
   }
 }
-// Create notifications for friends who opted in
 async function notifyFriendsOf(publisherId, payload) {
   try {
     const friends = await getFriendIds(publisherId);
@@ -158,13 +161,13 @@ async function notifyFriendsOf(publisherId, payload) {
         await addDoc(collection(db, "Notifications"), {
           recipientId: fid,
           actorId: publisherId,
-          actorName: actor.name,       // 👈 full name from Users
+          actorName: actor.name,
           actorPhoto: actor.photo,
-          type: payload.type,          // 'post' | 'like'
+          type: payload.type, // 'post' | 'like'
           postId: payload.postId || "",
           text: payload.text || "",
           createdAt: serverTimestamp(),
-          read: false
+          read: false,
         });
       })
     );
@@ -173,21 +176,32 @@ async function notifyFriendsOf(publisherId, payload) {
   }
 }
 
+/* -------------------- Photos helpers (NEW) -------------------- */
+// Write a Photo document (for profile, cover, or post images)
+async function recordPhoto(userId, url, type) {
+  try {
+    await addDoc(collection(db, "Photos"), {
+      userId,
+      url,
+      type, // 'profile' | 'cover' | 'post'
+      createdAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.error("recordPhoto error:", e);
+  }
+}
 
 export default function Profile() {
   const navigate = useNavigate();
   const params = useParams(); // expects optional :uid
   const [authReady, setAuthReady] = useState(false);
 
-  // Who's page are we viewing?
   const [viewingUserId, setViewingUserId] = useState(null);
 
-  // Header/profile state
   const [userData, setUserData] = useState(null);
   const [coverPhoto, setCoverPhoto] = useState(DEFAULT_COVER);
   const [loading, setLoading] = useState(true);
 
-  // ProfileInfo editing
   const [editing, setEditing] = useState(false);
   const [profileForm, setProfileForm] = useState({
     phone: "",
@@ -196,20 +210,22 @@ export default function Profile() {
     birthday: "",
     work: "",
     about: "",
-    city: ""
+    city: "",
   });
 
-  // Search (Navbar)
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState([]);
 
-  // Posts
   const [postText, setPostText] = useState("");
   const [postImage, setPostImage] = useState(null);
   const [posts, setPosts] = useState([]);
 
-  // Friends
   const [friendCount, setFriendCount] = useState(0);
+
+  // Photos state: count + small gallery
+  const [photosCount, setPhotosCount] = useState(0);
+  const [recentPhotos, setRecentPhotos] = useState([]);
+
   const [isFriends, setIsFriends] = useState(false);
   const isOwnProfile = useMemo(
     () => auth.currentUser?.uid && viewingUserId && auth.currentUser.uid === viewingUserId,
@@ -229,7 +245,6 @@ export default function Profile() {
     return () => unsub();
   }, [navigate]);
 
-  // Decide viewing user id when auth or route param changes
   useEffect(() => {
     if (!authReady) return;
     const uidToView = params.uid || auth.currentUser?.uid;
@@ -276,7 +291,7 @@ export default function Profile() {
             birthday: data.birthday || "",
             work: data.work || "",
             about: data.about || "",
-            city: data.city || ""
+            city: data.city || "",
           });
         } else {
           if (!mounted) return;
@@ -285,6 +300,8 @@ export default function Profile() {
 
         await fetchPosts(viewingUserId);
         await refreshFriendCount(viewingUserId);
+        await refreshPhotoCount(viewingUserId);
+        await fetchRecentPhotos(viewingUserId);
       } catch (err) {
         console.error("Error loading viewing profile:", err);
       } finally {
@@ -292,11 +309,13 @@ export default function Profile() {
       }
     })();
 
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingUserId]);
 
-  // Listen to accepted friendships for the viewed profile (string IDs only)
+  // Friend count live updates
   useEffect(() => {
     if (!viewingUserId) return;
     const frRef = collection(db, "FriendRequests");
@@ -310,11 +329,27 @@ export default function Profile() {
       () => refreshFriendCount(viewingUserId)
     );
 
-    return () => { unsub1(); unsub2(); };
+    return () => {
+      unsub1();
+      unsub2();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingUserId]);
 
-  // Track if viewer and profile user are friends (for Notify toggle)
+  // Photos live updates (count + recent grid)
+  useEffect(() => {
+    if (!viewingUserId) return;
+    const unsub = onSnapshot(
+      query(collection(db, "Photos"), where("userId", "==", viewingUserId)),
+      async () => {
+        await refreshPhotoCount(viewingUserId);
+        await fetchRecentPhotos(viewingUserId);
+      }
+    );
+    return () => unsub();
+  }, [viewingUserId]);
+
+  // Track if viewer and profile user are friends
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -325,7 +360,9 @@ export default function Profile() {
       const yes = await areWeFriends(auth.currentUser.uid, viewingUserId);
       if (alive) setIsFriends(yes);
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [auth.currentUser?.uid, viewingUserId]);
 
   /* ---------- Fetch posts with YouTube metadata ---------- */
@@ -350,16 +387,15 @@ export default function Profile() {
               post.youtubeMeta = {
                 url,
                 title: meta.title,
-                thumbnail: meta.thumbnail_url
+                thumbnail: meta.thumbnail_url,
               };
             } else {
-              // Fallback: if we can extract an id, show thumbnail only
               const ytId = extractYouTubeId(url);
               if (ytId) {
                 post.youtubeMeta = {
                   url,
                   title: "YouTube video",
-                  thumbnail: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`
+                  thumbnail: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
                 };
               }
             }
@@ -390,15 +426,49 @@ export default function Profile() {
     }
   }
 
+  async function refreshPhotoCount(uid) {
+    try {
+      if (!uid) return;
+      const cnt = await getCountFromServer(
+        query(collection(db, "Photos"), where("userId", "==", uid))
+      );
+      setPhotosCount(cnt.data().count || 0);
+    } catch (e) {
+      console.error("Photo count error:", e);
+      setPhotosCount(0);
+    }
+  }
+
+  async function fetchRecentPhotos(uid) {
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, "Photos"),
+          where("userId", "==", uid),
+          orderBy("createdAt", "desc"),
+          limit(12)
+        )
+      );
+      setRecentPhotos(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error("fetchRecentPhotos error:", e);
+    }
+  }
+
   /* ---------- Uploads (own profile only) ---------- */
   const handleUploadProfile = async (file) => {
     if (!file || !auth.currentUser || !isOwnProfile) return;
     try {
+      // keep your existing storage path (overwrites old avatar)
       const imageRef = ref(storage, `profilePictures/${auth.currentUser.uid}`);
       await uploadBytes(imageRef, file);
       const url = await getDownloadURL(imageRef);
+
       await updateDoc(doc(db, "Users", auth.currentUser.uid), { photo: url });
       setUserData((p) => ({ ...p, photo: url }));
+
+      // record in Photos
+      await recordPhoto(auth.currentUser.uid, url, "profile");
     } catch (err) {
       console.error("Error upload profile:", err);
     }
@@ -410,8 +480,12 @@ export default function Profile() {
       const coverRef = ref(storage, `coverPhotos/${auth.currentUser.uid}`);
       await uploadBytes(coverRef, file);
       const url = await getDownloadURL(coverRef);
+
       await updateDoc(doc(db, "Users", auth.currentUser.uid), { coverPhoto: url });
       setCoverPhoto(url);
+
+      // record in Photos
+      await recordPhoto(auth.currentUser.uid, url, "cover");
     } catch (err) {
       console.error("Error upload cover:", err);
     }
@@ -428,21 +502,24 @@ export default function Profile() {
         imageUrl = await getDownloadURL(imageRef);
       }
 
-      // Use explicit doc ref to get the id for notifications
+      // create post with known id
       const newRef = doc(collection(db, "Posts"));
       await setDoc(newRef, {
         userId: auth.currentUser.uid,
         text: (postText || "").trim(),
         image: imageUrl,
         createdAt: new Date(),
-        likes: []
+        likes: [],
       });
 
-      // Notify friends about the new post
+      // record photo if post has image
+      if (imageUrl) await recordPhoto(auth.currentUser.uid, imageUrl, "post");
+
+      // notify friends about new post
       await notifyFriendsOf(auth.currentUser.uid, {
         type: "post",
         postId: newRef.id,
-        text: (postText || "").trim()
+        text: (postText || "").trim(),
       });
 
       setPostText("");
@@ -454,12 +531,13 @@ export default function Profile() {
   };
 
   const handleDeletePost = async (postId) => {
-    const target = posts.find(p => p.id === postId);
+    const target = posts.find((p) => p.id === postId);
     if (!target || target.userId !== auth.currentUser?.uid) return;
 
     try {
       await deleteDoc(doc(db, "Posts", postId));
       setPosts((p) => p.filter((x) => x.id !== postId));
+      // (optional) also remove from Photos if you want to keep gallery tidy
     } catch (err) {
       console.error("Error deleting post:", err);
     }
@@ -486,7 +564,7 @@ export default function Profile() {
         });
         setSearchResults(results);
         return;
-      }
+    }
 
       const variants = [raw, raw.toLowerCase(), capitalize(raw.toLowerCase()), raw.toUpperCase()];
       const seen = new Set();
@@ -529,7 +607,7 @@ export default function Profile() {
     }
   };
 
-  /* ---------- Save/Cancel profile (own profile only) ---------- */
+  /* ---------- Save/Cancel profile ---------- */
   const handleSaveProfile = async () => {
     if (!auth.currentUser || !isOwnProfile) return;
     try {
@@ -541,7 +619,7 @@ export default function Profile() {
         birthday: profileForm.birthday || "",
         work: profileForm.work || "",
         about: profileForm.about || "",
-        city: profileForm.city || ""
+        city: profileForm.city || "",
       };
       await setDoc(userRef, updates, { merge: true });
 
@@ -569,7 +647,7 @@ export default function Profile() {
       birthday: userData.birthday || "",
       work: userData.work || "",
       about: userData.about || "",
-      city: userData.city || ""
+      city: userData.city || "",
     });
     setEditing(false);
   };
@@ -586,15 +664,7 @@ export default function Profile() {
         setSearchTerm={setSearchTerm}
         handleSearch={handleSearch}
         searchResults={searchResults}
-        // If your Navbar supports slots, place the bell there instead.
       />
-      
-      {/* Quick place for the bell */}
-      {auth.currentUser?.uid && (
-        <div style={{ position: "fixed", top: 10, right: 12, zIndex: 1000, marginRight: 1203, marginTop: 32 }}>
-          <NotificationBell currentUserId={auth.currentUser.uid} />
-        </div>
-      )}
 
       {/* Cover + Avatar */}
       <div style={{ position: "relative", marginBottom: "40px" }}>
@@ -625,7 +695,7 @@ export default function Profile() {
             borderRadius: "50%",
             overflow: "hidden",
             border: "4px solid white",
-            background: "#eee"
+            background: "#eee",
           }}
         >
           {isOwnProfile && (
@@ -657,7 +727,7 @@ export default function Profile() {
           color: "#fff",
           padding: "-16px 4px",
           marginTop: "-50px",
-          borderRadius: "4px"
+          borderRadius: "4px",
         }}
       >
         <div style={{ display: "flex", alignItems: "center" }}>
@@ -673,7 +743,7 @@ export default function Profile() {
           </div>
           <div>
             <strong>Photos</strong>
-            <div style={{ color: "#00ff90", textAlign: "center" }}>10</div>
+            <div style={{ color: "#00ff90", textAlign: "center" }}>{photosCount}</div>
           </div>
           <div>
             <strong>Likes</strong>
@@ -687,11 +757,6 @@ export default function Profile() {
                   viewerId={auth.currentUser.uid}
                   profileUserId={viewingUserId}
                   onChanged={() => refreshFriendCount(viewingUserId)}
-                />
-                <NotifyButton
-                  currentUserId={auth.currentUser.uid}
-                  profileUserId={viewingUserId}
-                  isFriends={isFriends}
                 />
               </>
             )}
@@ -707,7 +772,7 @@ export default function Profile() {
                     borderRadius: "6px",
                     fontWeight: "bold",
                     marginRight: "23px",
-                    cursor: "pointer"
+                    cursor: "pointer",
                   }}
                 >
                   Update Info
@@ -722,7 +787,7 @@ export default function Profile() {
                       color: "#000",
                       border: "1px solid #ccc",
                       borderRadius: "4px",
-                      zIndex: 10
+                      zIndex: 10,
                     }}
                   >
                     <div
@@ -762,18 +827,73 @@ export default function Profile() {
         editing={editing}
         profileForm={profileForm}
         setProfileForm={setProfileForm}
-        // prevent visitors from flipping edit mode
-        setEditing={(v) => { if (auth.currentUser?.uid === viewingUserId) setEditing(v); }}
+        setEditing={(v) => {
+          if (auth.currentUser?.uid === viewingUserId) setEditing(v);
+        }}
         handleSaveProfile={handleSaveProfile}
         handleCancelEdit={handleCancelEdit}
         profileUserId={viewingUserId}
         canEdit={auth.currentUser?.uid === viewingUserId}
       />
 
-      
+      {/* Simple Photos box (below ProfileInfo) */}
+      <div
+        style={{
+          paddingLeft: "24px",
+          paddingRight: "24px",
+          marginTop: "16px",
+        }}
+      >
+        <div
+          style={{
+            border: "1px solid #ccc",
+            borderRadius: 4,
+            background: "#f4f4f4",
+            padding: 10,
+          }}
+        >
+          <h4 style={{ marginTop: 0 }}>Photos</h4>
+          {recentPhotos.length === 0 ? (
+            <div style={{ color: "#666", fontSize: 13 }}>No photos yet.</div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(6, 1fr)",
+                gap: 8,
+              }}
+            >
+              {recentPhotos.map((p) => (
+                <a
+                  key={p.id}
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={p.type || "photo"}
+                  style={{ display: "block", borderRadius: 6, overflow: "hidden" }}
+                >
+                  <img
+                    src={p.url}
+                    alt={p.type || "photo"}
+                    loading="lazy"
+                    style={{ width: "100%", height: 80, objectFit: "cover", display: "block" }}
+                  />
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Posts */}
-      <div style={{ marginTop: "40px", paddingLeft: "24px", paddingRight: "24px", paddingBottom: "60px" }}>
+      <div
+        style={{
+          marginTop: "40px",
+          paddingLeft: "24px",
+          paddingRight: "24px",
+          paddingBottom: "60px",
+        }}
+      >
         {isOwnProfile && (
           <>
             <h3>Create Post</h3>
@@ -813,7 +933,6 @@ export default function Profile() {
                 </p>
               )}
 
-              {/* Uploaded image */}
               {post.image && (
                 <img
                   src={post.image}
@@ -822,7 +941,6 @@ export default function Profile() {
                 />
               )}
 
-              {/* YouTube preview card (only if no uploaded image) */}
               {post.youtubeMeta && !post.image && (
                 <a
                   href={post.youtubeMeta.url}
@@ -835,7 +953,7 @@ export default function Profile() {
                     overflow: "hidden",
                     marginTop: 8,
                     textDecoration: "none",
-                    color: "inherit"
+                    color: "inherit",
                   }}
                   title="Open on YouTube"
                 >
@@ -861,24 +979,19 @@ export default function Profile() {
               <div style={{ marginTop: 8 }}>
                 <Likefeature
                   postId={post.id}
+                  postOwnerId={post.userId}
                   likes={post.likes || []}
                   currentUserId={auth.currentUser?.uid}
-                  onChange={async (newLikes) => {
-                    // Update local state
-                    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p)));
-
-                    // Notify friends that *I* liked a post (optional)
-                    const me = auth.currentUser?.uid;
-                    if (me) {
-                      const wasLiked = (post.likes || []).includes(me);
-                      const isLiked = (newLikes || []).includes(me);
-                      if (!wasLiked && isLiked) {
-                        await notifyFriendsOf(me, { type: "like", postId: post.id, text: "liked a post" });
-                      }
-                    }
-                  }}
+                  onChange={(newLikes) =>
+                    setPosts((prev) =>
+                      prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
+                    )
+                  }
                 />
               </div>
+
+              {/* Comments */}
+              <Comments post={post} currentUserId={auth.currentUser?.uid} />
 
               {post.userId === auth.currentUser?.uid && (
                 <button

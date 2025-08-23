@@ -13,6 +13,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import NotificationBell from "./NotificationBell";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const FIREBASE_DEFAULT_IMAGE =
@@ -164,8 +165,9 @@ export default function Navbar({
         position: "relative",
       }}
     >
-      {/* Requests button (top-left) */}
-      <div style={{ position: "absolute", left: 16, top: 10 }}>
+      {/* LEFT: Requests + NotificationBell */}
+      <div style={{ position: "absolute", left: 16, top: 10, display: "flex", alignItems: "center", gap: 10 }}>
+        {/* Requests button + dropdown */}
         <div ref={reqWrapRef} style={{ position: "relative", display: "inline-block" }}>
           <button
             onClick={() => setOpenReq((o) => !o)}
@@ -180,7 +182,7 @@ export default function Navbar({
               display: "flex",
               alignItems: "center",
               gap: 8,
-              marginTop:"33px"
+              marginTop: "33px",
             }}
           >
             <span style={{ fontSize: 16 }}>🔔</span>
@@ -207,7 +209,7 @@ export default function Navbar({
             )}
           </button>
 
-          {/* Dropdown anchored under the button */}
+          {/* Dropdown anchored under Requests */}
           {openReq && (
             <div
               style={{
@@ -299,6 +301,13 @@ export default function Navbar({
             </div>
           )}
         </div>
+
+        {/* Notification bell placed right next to Requests */}
+        {currentUserId && (
+          <div style={{ marginTop: "33px" }}>
+            <NotificationBell currentUserId={currentUserId} />
+          </div>
+        )}
       </div>
 
       {/* Brand */}
@@ -317,7 +326,7 @@ export default function Navbar({
       {currentUserId && (
         <div style={{ position: "absolute", right: 16, top: 10 }}>
           <Link
-            to={`/profile/${currentUserId}`}  // or just "/profile" if your route supports it
+            to={`/profile/${currentUserId}`}
             title="Go to my profile"
             style={{
               display: "inline-flex",
@@ -330,7 +339,7 @@ export default function Navbar({
               textDecoration: "none",
               background: "transparent",
               marginTop: "33px",
-              marginRight: "102px"
+              marginRight: "102px",
             }}
           >
             <img

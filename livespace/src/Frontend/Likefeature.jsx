@@ -1,13 +1,25 @@
 // Likefeature.jsx
 import React, { useMemo, useState } from "react";
-import { db } from "./firebase";
-import { doc, updateDoc, arrayUnion, arrayRemove } from "firebase/firestore";
+import { db, auth } from "./firebase";
+import {
+  doc,
+  updateDoc,
+  arrayUnion,
+  arrayRemove,
+  addDoc,
+  collection,
+  serverTimestamp,
+  getDoc,
+} from "firebase/firestore";
+
+const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 
 export default function Likefeature({
   postId,
+  postOwnerId,          // <-- new prop
   likes = [],
   currentUserId,
-  onChange = () => {}
+  onChange = () => {},
 }) {
   const [saving, setSaving] = useState(false);
 
@@ -35,9 +47,39 @@ export default function Likefeature({
       onChange(nextLikes);
 
       const postRef = doc(db, "Posts", postId);
-      await updateDoc(postRef, {
-        likes: hasLiked ? arrayRemove(currentUserId) : arrayUnion(currentUserId)
-      });
+      if (hasLiked) {
+        await updateDoc(postRef, {
+          likes: arrayRemove(currentUserId),
+        });
+      } else {
+        await updateDoc(postRef, {
+          likes: arrayUnion(currentUserId),
+        });
+
+        // --- create notification for post owner ---
+        if (postOwnerId && postOwnerId !== currentUserId) {
+          try {
+            const meSnap = await getDoc(doc(db, "Users", currentUserId));
+            const me = meSnap.exists() ? meSnap.data() : {};
+
+            await addDoc(collection(db, "Notifications"), {
+              recipientId: postOwnerId,
+              actorId: currentUserId,
+              actorFirstName: me.firstName || "",
+              actorLastName: me.lastName || "",
+              actorPhoto:
+                !me.photo || me.photo === "" ? FALLBACK_IMAGE : me.photo,
+              type: "like",
+              postId,
+              text: "",
+              createdAt: serverTimestamp(),
+              read: false,
+            });
+          } catch (e) {
+            console.error("Error creating like notification:", e);
+          }
+        }
+      }
     } catch (err) {
       console.error("Error toggling like:", err);
       // revert optimistic update on error
@@ -60,7 +102,7 @@ export default function Likefeature({
           cursor: saving ? "not-allowed" : "pointer",
           background: hasLiked ? "#00ff90" : "#f5f5f5",
           color: hasLiked ? "#052023" : "#333",
-          fontWeight: 600
+          fontWeight: 600,
         }}
         aria-pressed={hasLiked}
       >

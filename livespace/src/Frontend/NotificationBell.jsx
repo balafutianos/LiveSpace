@@ -10,6 +10,7 @@ const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 export default function NotificationBell({ currentUserId }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
+
   const unread = items.filter(i => !i.read).length;
 
   useEffect(() => {
@@ -28,8 +29,30 @@ export default function NotificationBell({ currentUserId }) {
   }, [currentUserId]);
 
   const markRead = async (id) => {
-    try { await updateDoc(doc(db, "Notifications", id), { read: true }); }
-    catch (e) { console.error("markRead", e); }
+    try {
+      await updateDoc(doc(db, "Notifications", id), { read: true });
+    } catch (e) {
+      console.error("markRead", e);
+    }
+  };
+
+  const fmtWhen = (createdAt) => {
+    try {
+      if (!createdAt) return "";
+      // Firestore Timestamp
+      if (createdAt.seconds) return new Date(createdAt.seconds * 1000).toLocaleString();
+      // JS Date or ISO string
+      return new Date(createdAt).toLocaleString();
+    } catch { return ""; }
+  };
+
+  const labelFor = (type) => {
+    switch (type) {
+      case "post":    return "posted";
+      case "like":    return "liked your post";
+      case "comment": return "commented on your post";
+      default:        return "did something";
+    }
   };
 
   return (
@@ -49,41 +72,52 @@ export default function NotificationBell({ currentUserId }) {
       >
         🔔
         {unread > 0 && (
-          <span style={{
-            position: "absolute",
-            top: -6, right: -6,
-            background: "#ff3b30",
-            color: "#fff",
-            borderRadius: "999px",
-            padding: "2px 6px",
-            fontSize: 12,
-            fontWeight: 700
-          }}>{unread}</span>
+          <span
+            style={{
+              position: "absolute",
+              top: -6,
+              right: -6,
+              background: "#ff3b30",
+              color: "#fff",
+              borderRadius: "999px",
+              padding: "2px 6px",
+              fontSize: 12,
+              fontWeight: 700
+            }}
+          >
+            {unread}
+          </span>
         )}
       </button>
 
       {open && (
-        <div style={{
-          position: "absolute",
-          right: 0, top: "110%",
-          width: 360,
-          maxHeight: 460,
-          overflowY: "auto",
-          background: "#fff",
-          color: "#111",
-          border: "1px solid #ddd",
-          borderRadius: 8,
-          boxShadow: "0 8px 20px rgba(0,0,0,.15)",
-          zIndex: 50
-        }}>
-          {items.length === 0 && <div style={{ padding: 12, color: "#555" }}>No notifications</div>}
-          {items.map(n => {
+        <div
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "110%",
+            width: 360,
+            maxHeight: 460,
+            overflowY: "auto",
+            background: "#fff",
+            color: "#111",
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            boxShadow: "0 8px 20px rgba(0,0,0,.15)",
+            zIndex: 50
+          }}
+        >
+          {items.length === 0 && (
+            <div style={{ padding: 12, color: "#555" }}>No notifications</div>
+          )}
+
+          {items.map((n) => {
+            const first = (n.actorFirstName || "").trim();
+            const last  = (n.actorLastName  || "").trim();
+            const nameFromParts = `${first} ${last}`.trim();
+            const name = nameFromParts || n.actorName || "Someone";
             const photo = n.actorPhoto || FALLBACK_IMAGE;
-            const name = n.actorName || "Someone";
-            const line =
-              n.type === "post"
-                ? `${name} posted`
-                : `${name} liked a post`;
+            const line = `${name} ${labelFor(n.type)}`;
 
             return (
               <a
@@ -113,16 +147,35 @@ export default function NotificationBell({ currentUserId }) {
                   }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis"
+                    }}
+                  >
                     {line}
                   </div>
-                  {n.text && (
-                    <div style={{ fontSize: 13, color: "#444", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {n.text}
+
+                  {/* Show a short snippet only for comments */}
+                  {n.type === "comment" && n.text && (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: "#444",
+                        marginTop: 2,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis"
+                      }}
+                    >
+                      “{n.text}”
                     </div>
                   )}
+
                   <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
-                    {new Date(n.createdAt?.seconds ? n.createdAt.seconds * 1000 : Date.now()).toLocaleString()}
+                    {fmtWhen(n.createdAt)}
                   </div>
                 </div>
               </a>
