@@ -2,4 +2,4 @@
 
 https://livespacezone.web.app/
 
-Completion: 32%
+The Livespace its under construction, so as you expect there are bugs(temporarily)
