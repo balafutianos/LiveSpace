@@ -18,11 +18,11 @@ import {
   deleteDoc,
   onSnapshot,
   getCountFromServer,
-  limit
+  limit,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
-
+import PhotoModal from "./PhotoModal";
 import Navbar from "./Navbar";
 import ProfileInfo from "./ProfileInfo";
 import Likefeature from "./Likefeature";
@@ -92,7 +92,24 @@ async function fetchYouTubeMeta(url) {
   }
 }
 
-/* -------------------- Notifications helpers -------------------- */
+// Ensure a Photo doc (userId,url,type) stores a postId
+async function linkPhotoToPost(userId, url, type, postId) {
+  try {
+    const qy = query(
+      collection(db, "Photos"),
+      where("userId", "==", userId),
+      where("url", "==", url),
+      where("type", "==", type)
+    );
+    const snap = await getDocs(qy);
+    await Promise.all(snap.docs.map(d => updateDoc(d.ref, { postId })));
+  } catch (e) {
+    console.error("linkPhotoToPost error:", e);
+  }
+}
+
+
+/* -------------------- Friend/notify helpers -------------------- */
 async function areWeFriends(viewerId, profileId) {
   const frRef = collection(db, "FriendRequests");
   const [a, b] = await Promise.all([
@@ -124,7 +141,8 @@ async function getActorInfo(uid) {
   const firstName = u.firstName || "";
   const lastName = u.lastName || "";
   const name = `${firstName} ${lastName}`.trim() || (u.email || "Someone");
-  const photo = u.photo || FALLBACK_IMAGE;
+  const photo =
+    !u.photo || u.photo === "" || u.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : u.photo;
 
   return { name, photo };
 }
@@ -157,13 +175,12 @@ async function notifyFriendsOf(publisherId, payload) {
     await Promise.all(
       friends.map(async (fid) => {
         if (!(await shouldNotify(fid, publisherId))) return;
-
         await addDoc(collection(db, "Notifications"), {
           recipientId: fid,
           actorId: publisherId,
           actorName: actor.name,
           actorPhoto: actor.photo,
-          type: payload.type, // 'post' | 'like'
+          type: payload.type, // 'post' | 'like' | 'comment'
           postId: payload.postId || "",
           text: payload.text || "",
           createdAt: serverTimestamp(),
@@ -176,24 +193,59 @@ async function notifyFriendsOf(publisherId, payload) {
   }
 }
 
-/* -------------------- Photos helpers (NEW) -------------------- */
 // Write a Photo document (for profile, cover, or post images)
+// Now with de-duplication: won't add another doc if same (userId,url,type) exists.
 async function recordPhoto(userId, url, type) {
   try {
-    await addDoc(collection(db, "Photos"), {
+    const qy = query(
+      collection(db, "Photos"),
+      where("userId", "==", userId),
+      where("url", "==", url),
+      where("type", "==", type)
+    );
+    const snap = await getDocs(qy);
+    if (!snap.empty) {
+      return snap.docs[0].id;
+    }
+    const docRef = await addDoc(collection(db, "Photos"), {
       userId,
       url,
       type, // 'profile' | 'cover' | 'post'
       createdAt: serverTimestamp(),
     });
+    return docRef.id;
   } catch (e) {
     console.error("recordPhoto error:", e);
+    return null;
   }
 }
 
+
+/* Create a feed post for an image you just uploaded (profile/cover/post) */
+async function createImagePost(userId, imageUrl, text) {
+  const newPostRef = doc(collection(db, "Posts"));
+  await setDoc(newPostRef, {
+    userId,
+    text: text || "",
+    image: imageUrl,
+    createdAt: new Date(),
+    likes: [],
+  });
+
+  await notifyFriendsOf(userId, {
+    type: "post",
+    postId: newPostRef.id,
+    text,
+  });
+
+  return newPostRef.id;
+}
+
+/* ===================================================================== */
+
 export default function Profile() {
   const navigate = useNavigate();
-  const params = useParams(); // expects optional :uid
+  const params = useParams();
   const [authReady, setAuthReady] = useState(false);
 
   const [viewingUserId, setViewingUserId] = useState(null);
@@ -219,10 +271,12 @@ export default function Profile() {
   const [postText, setPostText] = useState("");
   const [postImage, setPostImage] = useState(null);
   const [posts, setPosts] = useState([]);
+  // Photos modal
+  const [activePhoto, setActivePhoto] = useState(null);
 
   const [friendCount, setFriendCount] = useState(0);
 
-  // Photos state: count + small gallery
+  // Photos state
   const [photosCount, setPhotosCount] = useState(0);
   const [recentPhotos, setRecentPhotos] = useState([]);
 
@@ -251,7 +305,7 @@ export default function Profile() {
     setViewingUserId(uidToView || null);
   }, [authReady, params.uid]);
 
-  // Load profile + posts for viewingUserId
+  /* ---------- Load profile + posts + photos ---------- */
   useEffect(() => {
     if (!viewingUserId) return;
     let mounted = true;
@@ -262,7 +316,7 @@ export default function Profile() {
         const userRef = doc(db, "Users", viewingUserId);
         const snap = await getDoc(userRef);
 
-        // Create skeleton doc for own profile if missing
+        // create skeleton for own profile if missing
         if (!snap.exists() && auth.currentUser?.uid === viewingUserId) {
           await setDoc(
             userRef,
@@ -293,8 +347,7 @@ export default function Profile() {
             about: data.about || "",
             city: data.city || "",
           });
-        } else {
-          if (!mounted) return;
+        } else if (mounted) {
           setUserData(null);
         }
 
@@ -315,7 +368,7 @@ export default function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingUserId]);
 
-  // Friend count live updates
+  // live friend count
   useEffect(() => {
     if (!viewingUserId) return;
     const frRef = collection(db, "FriendRequests");
@@ -336,7 +389,7 @@ export default function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingUserId]);
 
-  // Photos live updates (count + recent grid)
+  // live photos box
   useEffect(() => {
     if (!viewingUserId) return;
     const unsub = onSnapshot(
@@ -349,7 +402,7 @@ export default function Profile() {
     return () => unsub();
   }, [viewingUserId]);
 
-  // Track if viewer and profile user are friends
+  // track friendship for possible toggles (kept for completeness)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -400,7 +453,6 @@ export default function Profile() {
               }
             }
           }
-
           return post;
         })
       );
@@ -459,16 +511,18 @@ export default function Profile() {
   const handleUploadProfile = async (file) => {
     if (!file || !auth.currentUser || !isOwnProfile) return;
     try {
-      // keep your existing storage path (overwrites old avatar)
-      const imageRef = ref(storage, `profilePictures/${auth.currentUser.uid}`);
+      const uid = auth.currentUser.uid;
+      const imageRef = ref(storage, `profilePictures/${uid}`);
       await uploadBytes(imageRef, file);
       const url = await getDownloadURL(imageRef);
 
-      await updateDoc(doc(db, "Users", auth.currentUser.uid), { photo: url });
+      await updateDoc(doc(db, "Users", uid), { photo: url });
       setUserData((p) => ({ ...p, photo: url }));
 
-      // record in Photos
-      await recordPhoto(auth.currentUser.uid, url, "profile");
+      await recordPhoto(uid, url, "profile");
+      await createImagePost(uid, url, "Updated profile picture");
+
+      await Promise.all([fetchPosts(uid), fetchRecentPhotos(uid), refreshPhotoCount(uid)]);
     } catch (err) {
       console.error("Error upload profile:", err);
     }
@@ -477,15 +531,18 @@ export default function Profile() {
   const handleUploadCover = async (file) => {
     if (!file || !auth.currentUser || !isOwnProfile) return;
     try {
-      const coverRef = ref(storage, `coverPhotos/${auth.currentUser.uid}`);
+      const uid = auth.currentUser.uid;
+      const coverRef = ref(storage, `coverPhotos/${uid}`);
       await uploadBytes(coverRef, file);
       const url = await getDownloadURL(coverRef);
 
-      await updateDoc(doc(db, "Users", auth.currentUser.uid), { coverPhoto: url });
+      await updateDoc(doc(db, "Users", uid), { coverPhoto: url });
       setCoverPhoto(url);
 
-      // record in Photos
-      await recordPhoto(auth.currentUser.uid, url, "cover");
+      await recordPhoto(uid, url, "cover");
+      await createImagePost(uid, url, "Updated cover photo");
+
+      await Promise.all([fetchPosts(uid), fetchRecentPhotos(uid), refreshPhotoCount(uid)]);
     } catch (err) {
       console.error("Error upload cover:", err);
     }
@@ -502,7 +559,6 @@ export default function Profile() {
         imageUrl = await getDownloadURL(imageRef);
       }
 
-      // create post with known id
       const newRef = doc(collection(db, "Posts"));
       await setDoc(newRef, {
         userId: auth.currentUser.uid,
@@ -512,10 +568,8 @@ export default function Profile() {
         likes: [],
       });
 
-      // record photo if post has image
       if (imageUrl) await recordPhoto(auth.currentUser.uid, imageUrl, "post");
 
-      // notify friends about new post
       await notifyFriendsOf(auth.currentUser.uid, {
         type: "post",
         postId: newRef.id,
@@ -525,6 +579,8 @@ export default function Profile() {
       setPostText("");
       setPostImage(null);
       await fetchPosts(auth.currentUser.uid);
+      await fetchRecentPhotos(auth.currentUser.uid);
+      await refreshPhotoCount(auth.currentUser.uid);
     } catch (err) {
       console.error("Error creating post:", err);
     }
@@ -535,11 +591,24 @@ export default function Profile() {
     if (!target || target.userId !== auth.currentUser?.uid) return;
 
     try {
+      // 1) delete the post
       await deleteDoc(doc(db, "Posts", postId));
       setPosts((p) => p.filter((x) => x.id !== postId));
-      // (optional) also remove from Photos if you want to keep gallery tidy
+
+      // 2) if the post had an image, remove matching photo(s) from Photos box
+      if (target.image) {
+        const photosQ = query(
+          collection(db, "Photos"),
+          where("userId", "==", auth.currentUser.uid),
+          where("url", "==", target.image),
+          where("type", "==", "post")
+        );
+        const photosSnap = await getDocs(photosQ);
+        const deletions = photosSnap.docs.map((d) => deleteDoc(doc(db, "Photos", d.id)));
+        await Promise.all(deletions);
+      }
     } catch (err) {
-      console.error("Error deleting post:", err);
+      console.error("Error deleting post (and photo):", err);
     }
   };
 
@@ -564,7 +633,7 @@ export default function Profile() {
         });
         setSearchResults(results);
         return;
-    }
+      }
 
       const variants = [raw, raw.toLowerCase(), capitalize(raw.toLowerCase()), raw.toUpperCase()];
       const seen = new Set();
@@ -652,6 +721,35 @@ export default function Profile() {
     setEditing(false);
   };
 
+  // --- NEW: open header photo (cover/profile) in PhotoModal
+  const openHeaderPhoto = async (type, url) => {
+    if (!viewingUserId || !url) return;
+    try {
+      const qy = query(
+        collection(db, "Photos"),
+        where("userId", "==", viewingUserId),
+        where("url", "==", url),
+        where("type", "==", type)
+      );
+      const snap = await getDocs(qy);
+
+      let photoId = null;
+      let postId = null;
+
+      if (snap.empty) {
+        photoId = await recordPhoto(viewingUserId, url, type);
+      } else {
+        const d = snap.docs[0];
+        photoId = d.id;
+        postId = d.data().postId || null;
+      }
+
+      setActivePhoto({ id: photoId, userId: viewingUserId, url, type, postId });
+    } catch (e) {
+      console.error("openHeaderPhoto error:", e);
+    }
+  };
+
   if (loading) return <div>Loading...</div>;
 
   const totalLikes = posts.reduce((acc, post) => acc + (post.likes?.length || 0), 0);
@@ -671,7 +769,9 @@ export default function Profile() {
         <img
           src={coverPhoto}
           alt="Cover"
-          style={{ width: "100%", height: "240px", objectFit: "cover" }}
+          onClick={() => openHeaderPhoto("cover", coverPhoto)}
+          title="Open cover photo"
+          style={{ width: "100%", height: "240px", objectFit: "cover", cursor: "pointer" }}
         />
         {isOwnProfile && (
           <input
@@ -712,7 +812,9 @@ export default function Profile() {
           <img
             src={userData?.photo}
             alt="Profile"
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            onClick={() => openHeaderPhoto("profile", userData?.photo)}
+            title="Open profile photo"
+            style={{ width: "100%", height: "100%", objectFit: "cover", cursor: "pointer" }}
           />
         </div>
       </div>
@@ -738,7 +840,7 @@ export default function Profile() {
 
         <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
           <div>
-            <strong>Friend List</strong>
+            <strong>Friends</strong>
             <div style={{ color: "#00ff90", textAlign: "center" }}>{friendCount}</div>
           </div>
           <div>
@@ -752,13 +854,11 @@ export default function Profile() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
             {!isOwnProfile && auth.currentUser?.uid && viewingUserId && (
-              <>
-                <FriendButton
-                  viewerId={auth.currentUser.uid}
-                  profileUserId={viewingUserId}
-                  onChanged={() => refreshFriendCount(viewingUserId)}
-                />
-              </>
+              <FriendButton
+                viewerId={auth.currentUser.uid}
+                profileUserId={viewingUserId}
+                onChanged={() => refreshFriendCount(viewingUserId)}
+              />
             )}
 
             {isOwnProfile && (
@@ -816,6 +916,7 @@ export default function Profile() {
         </div>
       </div>
 
+
       {/* Inbox (only on own profile) */}
       {isOwnProfile && auth.currentUser?.uid && (
         <FriendInbox currentUserId={auth.currentUser.uid} />
@@ -836,54 +937,61 @@ export default function Profile() {
         canEdit={auth.currentUser?.uid === viewingUserId}
       />
 
-      {/* Simple Photos box (below ProfileInfo) */}
-      <div
-        style={{
-          paddingLeft: "24px",
-          paddingRight: "24px",
-          marginTop: "16px",
-        }}
-      >
-        <div
-          style={{
-            border: "1px solid #ccc",
-            borderRadius: 4,
-            background: "#f4f4f4",
-            padding: 10,
-          }}
-        >
-          <h4 style={{ marginTop: 0 }}>Photos</h4>
-          {recentPhotos.length === 0 ? (
-            <div style={{ color: "#666", fontSize: 13 }}>No photos yet.</div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(6, 1fr)",
-                gap: 8,
-              }}
-            >
-              {recentPhotos.map((p) => (
-                <a
-                  key={p.id}
-                  href={p.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={p.type || "photo"}
-                  style={{ display: "block", borderRadius: 6, overflow: "hidden" }}
-                >
-                  <img
-                    src={p.url}
-                    alt={p.type || "photo"}
-                    loading="lazy"
-                    style={{ width: "100%", height: 80, objectFit: "cover", display: "block" }}
-                  />
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
+      {/* Photos box */}
+      <div style={{ marginTop: 16, padding: "0 24px" }}>
+        <h3 style={{ margin: "12px 0" }}>Photos</h3>
+        {recentPhotos.length === 0 ? (
+          <div style={{ color: "#666" }}>No photos yet.</div>
+        ) : (
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 8
+          }}>
+            {recentPhotos.map(p => (
+              <button
+                key={p.id}
+                onClick={() => setActivePhoto(p)}
+                style={{
+                  border: "none", padding: 0, cursor: "pointer",
+                  background: "transparent", borderRadius: 8, overflow: "hidden"
+                }}
+                title="Open photo"
+              >
+                <img
+                  src={p.url}
+                  alt="photo"
+                  style={{ width: "100%", height: 160, objectFit: "cover", display: "block" }}
+                />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+
+      {activePhoto && (
+  <PhotoModal
+    photo={activePhoto}
+    currentUserId={auth.currentUser?.uid}
+    onClose={() => setActivePhoto(null)}
+    onDeleted={(deletedId, deletedPhoto) => {
+      // remove from local gallery immediately
+      setRecentPhotos(prev => prev.filter(x => x.id !== deletedId));
+
+      // If we just deleted the image currently shown in the header, swap to defaults locally
+      if (deletedPhoto?.type === "profile" && userData?.photo === deletedPhoto.url) {
+        setUserData(p => p ? { ...p, photo: FALLBACK_IMAGE } : p);
+      }
+      if (deletedPhoto?.type === "cover" && coverPhoto === deletedPhoto.url) {
+        setCoverPhoto(DEFAULT_COVER);
+      }
+
+      // refresh counters
+      if (viewingUserId) refreshPhotoCount(viewingUserId);
+    }}
+  />
+)}
+
 
       {/* Posts */}
       <div
