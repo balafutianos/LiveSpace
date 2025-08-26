@@ -970,16 +970,28 @@ export default function Profile() {
       </div>
 
       {activePhoto && (
-        <PhotoModal
-          photo={activePhoto}
-          currentUserId={auth.currentUser?.uid}
-          onClose={() => setActivePhoto(null)}
-          onDeleted={(deletedId) => {
-            setRecentPhotos(prev => prev.filter(x => x.id !== deletedId));
-            if (viewingUserId) refreshPhotoCount(viewingUserId);
-          }}
-        />
-      )}
+  <PhotoModal
+    photo={activePhoto}
+    currentUserId={auth.currentUser?.uid}
+    onClose={() => setActivePhoto(null)}
+    onDeleted={(deletedId, deletedPhoto) => {
+      // remove from local gallery immediately
+      setRecentPhotos(prev => prev.filter(x => x.id !== deletedId));
+
+      // If we just deleted the image currently shown in the header, swap to defaults locally
+      if (deletedPhoto?.type === "profile" && userData?.photo === deletedPhoto.url) {
+        setUserData(p => p ? { ...p, photo: FALLBACK_IMAGE } : p);
+      }
+      if (deletedPhoto?.type === "cover" && coverPhoto === deletedPhoto.url) {
+        setCoverPhoto(DEFAULT_COVER);
+      }
+
+      // refresh counters
+      if (viewingUserId) refreshPhotoCount(viewingUserId);
+    }}
+  />
+)}
+
 
       {/* Posts */}
       <div
