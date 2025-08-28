@@ -1,5 +1,6 @@
 // Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import {
   collection,
@@ -14,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { db } from "./firebase";
 import NotificationBell from "./NotificationBell";
-
+import MessageInbox from "./MessageInbox";
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const FIREBASE_DEFAULT_IMAGE =
   "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
@@ -29,7 +30,7 @@ export default function Navbar({
   const [pending, setPending] = useState([]);   // FriendRequests
   const [senders, setSenders] = useState({});   // fromId -> user data
   const [openReq, setOpenReq] = useState(false);
-
+const navigate = useNavigate();
   const [myPhoto, setMyPhoto] = useState(FALLBACK_IMAGE);
 
   const reqWrapRef = useRef(null); // wraps the Requests button + dropdown
@@ -209,6 +210,24 @@ export default function Navbar({
             )}
           </button>
 
+ {/* <button
+  onClick={() => navigate("/messages")}
+  title="Messages"
+  style={{
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    padding: "8px 12px",
+    borderRadius: 10,
+    cursor: "pointer",
+    fontWeight: 600,
+  }}
+>
+  💬 Messages
+</button> */}
+
           {/* Dropdown anchored under Requests */}
           {openReq && (
             <div
@@ -309,6 +328,8 @@ export default function Navbar({
           </div>
         )}
       </div>
+
+<MessageInbox currentUserId={currentUserId} />
 
       {/* Brand */}
       <div
