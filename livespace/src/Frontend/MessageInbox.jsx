@@ -1,12 +1,7 @@
 // MessageInbox.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { db } from "./firebase";
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-} from "firebase/firestore";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 
 export default function MessageInbox({ currentUserId }) {
@@ -14,17 +9,18 @@ export default function MessageInbox({ currentUserId }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
 
+  // ---- NEW: audio + unread tracking ----
+  const audioRef = useRef(null);
+  const [soundArmed, setSoundArmed] = useState(false);
+  const prevUnreadRef = useRef(0);
+
   useEffect(() => {
     if (!currentUserId) return;
-    const q = query(
-      collection(db, "Messages"),
-      where("userIds", "array-contains", currentUserId)
-    );
+    const q = query(collection(db, "Messages"), where("userIds", "array-contains", currentUserId));
     const unsub = onSnapshot(
       q,
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // sort newest first
         list.sort((a, b) => {
           const aT = a.lastAt?.toMillis?.() || 0;
           const bT = b.lastAt?.toMillis?.() || 0;
@@ -40,16 +36,50 @@ export default function MessageInbox({ currentUserId }) {
   }, [currentUserId]);
 
   const totalUnread = useMemo(
-    () =>
-      threads.reduce((acc, t) => acc + (t.unread?.[currentUserId] || 0), 0),
+    () => threads.reduce((acc, t) => acc + (t.unread?.[currentUserId] || 0), 0),
     [threads, currentUserId]
   );
 
+  // ---- NEW: play sound when unread increases ----
+  useEffect(() => {
+    const prev = prevUnreadRef.current;
+    const increased = totalUnread > prev;
+    prevUnreadRef.current = totalUnread;
+
+    if (!increased) return;
+    if (!soundArmed) return; // must have one user interaction first
+    if (document.visibilityState !== "visible") return; // don’t play in background tabs
+
+    const el = audioRef.current;
+    if (!el) return;
+
+    try {
+      el.currentTime = 0;
+      const p = el.play();
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {
+          // Ignore autoplay errors silently
+        });
+      }
+    } catch {
+      /* no-op */
+    }
+  }, [totalUnread, soundArmed]);
+
+  // Arm sound on first click of the button (user gesture)
+  const toggleOpen = () => {
+    if (!soundArmed) setSoundArmed(true);
+    setOpen((v) => !v);
+  };
+
   return (
     <div style={{ position: "relative" }}>
+      {/* NEW: preload the audio (put file in public/sounds/new-message.mp3) */}
+      <audio ref={audioRef} src="livespace\public\sounds\message.mp3" preload="auto" />
+
       <button
         aria-label="Messages"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggleOpen}
         style={{
           position: "relative",
           background: "transparent",
@@ -141,9 +171,7 @@ export default function MessageInbox({ currentUserId }) {
                     )}
                   </div>
                   <small style={{ color: "#666" }}>
-                    {t.lastAt?.toDate
-                      ? new Date(t.lastAt.toDate()).toLocaleString()
-                      : ""}
+                    {t.lastAt?.toDate ? new Date(t.lastAt.toDate()).toLocaleString() : ""}
                   </small>
                 </button>
               );
