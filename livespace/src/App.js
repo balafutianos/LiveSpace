@@ -6,6 +6,7 @@ import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
 import Signup from "./Frontend/Signup"; // Import your Home component
 import Login from './Frontend/Login';
 import Profile from './Frontend/Profile';
+import Messages from "./Frontend/Messages"; 
 function App() {
   return (
     <Router>
@@ -15,6 +16,8 @@ function App() {
         <Route path="/Login" element={<Login />} />
         <Route path="/Profile" element={<Profile />} />
         <Route path="/profile/:uid" element={<Profile />} />  
+        <Route path="/messages" element={<Messages />} />
+  <Route path="/messages/:uid" element={<Messages />} />
       </Routes>
     </Router>
   );

@@ -24,11 +24,13 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
 import PhotoModal from "./PhotoModal";
 import Navbar from "./Navbar";
-import ProfileInfo from "./ProfileInfo";
+import ProfileInfo from "./Profileinfo";
 import Likefeature from "./Likefeature";
 import FriendButton from "./FriendButton";
 import FriendInbox from "./FriendInbox";
 import Comments from "./Comments";
+import Messages from "./Messages";
+
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER =
@@ -820,101 +822,119 @@ export default function Profile() {
       </div>
 
       {/* Header row */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "#1f2b39",
-          color: "#fff",
-          padding: "-16px 4px",
-          marginTop: "-50px",
-          borderRadius: "4px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <h2 style={{ marginLeft: "160px", fontSize: "24px" }}>
-            {userData?.firstName} {userData?.lastName}
-          </h2>
+<div
+  style={{
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    background: "#1f2b39",
+    color: "#fff",
+    padding: "-16px 4px",
+    marginTop: "-50px",
+    borderRadius: "4px",
+  }}
+>
+  <div style={{ display: "flex", alignItems: "center" }}>
+    <h2 style={{ marginLeft: "160px", fontSize: "24px" }}>
+      {userData?.firstName} {userData?.lastName}
+    </h2>
+  </div>
+
+  <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
+    <div>
+      <strong>Friends</strong>
+      <div style={{ color: "#00ff90", textAlign: "center" }}>{friendCount}</div>
+    </div>
+    <div>
+      <strong>Photos</strong>
+      <div style={{ color: "#00ff90", textAlign: "center" }}>{photosCount}</div>
+    </div>
+    <div>
+      <strong>Likes</strong>
+      <div style={{ color: "#00ff90", textAlign: "center" }}>{totalLikes}</div>
+    </div>
+
+    {/* ACTIONS ON THE RIGHT */}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+      {!isOwnProfile && auth.currentUser?.uid && viewingUserId && (
+        <div style={{ display: "flex", gap: 8 }}>
+          <FriendButton
+            viewerId={auth.currentUser.uid}
+            profileUserId={viewingUserId}
+            onChanged={() => refreshFriendCount(viewingUserId)}
+          />
+          {/* 👇 Add this button right here */}
+          <button
+            onClick={() => navigate(`/messages/${viewingUserId}`)}
+            style={{
+              background: "#fff",
+              border: "1px solid #ccc",
+              padding: "8px 12px",
+              borderRadius: 6,
+              cursor: "pointer"
+            }}
+            title="Send message"
+          >
+            Message
+          </button>
         </div>
+      )}
 
-        <div style={{ display: "flex", gap: "40px", alignItems: "center" }}>
-          <div>
-            <strong>Friends</strong>
-            <div style={{ color: "#00ff90", textAlign: "center" }}>{friendCount}</div>
-          </div>
-          <div>
-            <strong>Photos</strong>
-            <div style={{ color: "#00ff90", textAlign: "center" }}>{photosCount}</div>
-          </div>
-          <div>
-            <strong>Likes</strong>
-            <div style={{ color: "#00ff90", textAlign: "center" }}>{totalLikes}</div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
-            {!isOwnProfile && auth.currentUser?.uid && viewingUserId && (
-              <FriendButton
-                viewerId={auth.currentUser.uid}
-                profileUserId={viewingUserId}
-                onChanged={() => refreshFriendCount(viewingUserId)}
-              />
-            )}
-
-            {isOwnProfile && (
-              <div style={{ position: "relative" }}>
-                <button
-                  onClick={() => setDropdownOpen(!dropdownOpen)}
-                  style={{
-                    backgroundColor: "#00ff90",
-                    border: "none",
-                    padding: "10px 16px",
-                    borderRadius: "6px",
-                    fontWeight: "bold",
-                    marginRight: "23px",
-                    cursor: "pointer",
-                  }}
-                >
-                  Update Info
-                </button>
-                {dropdownOpen && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "40px",
-                      right: 0,
-                      backgroundColor: "#fff",
-                      color: "#000",
-                      border: "1px solid #ccc",
-                      borderRadius: "4px",
-                      zIndex: 10,
-                    }}
-                  >
-                    <div
-                      onClick={() => {
-                        document.getElementById("profileInput").click();
-                        setDropdownOpen(false);
-                      }}
-                      style={{ padding: "10px", cursor: "pointer", borderBottom: "1px solid #eee" }}
-                    >
-                      Change Profile Picture
-                    </div>
-                    <div
-                      onClick={() => {
-                        document.getElementById("coverInput").click();
-                        setDropdownOpen(false);
-                      }}
-                      style={{ padding: "10px", cursor: "pointer" }}
-                    >
-                      Change Cover Photo
-                    </div>
-                  </div>
-                )}
+      {isOwnProfile && (
+        <div style={{ position: "relative" }}>
+          <button
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            style={{
+              backgroundColor: "#00ff90",
+              border: "none",
+              padding: "10px 16px",
+              borderRadius: "6px",
+              fontWeight: "bold",
+              marginRight: "23px",
+              cursor: "pointer",
+            }}
+          >
+            Update Info
+          </button>
+          {dropdownOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: "40px",
+                right: 0,
+                backgroundColor: "#fff",
+                color: "#000",
+                border: "1px solid #ccc",
+                borderRadius: "4px",
+                zIndex: 10,
+              }}
+            >
+              <div
+                onClick={() => {
+                  document.getElementById("profileInput").click();
+                  setDropdownOpen(false);
+                }}
+                style={{ padding: "10px", cursor: "pointer", borderBottom: "1px solid #eee" }}
+              >
+                Change Profile Picture
               </div>
-            )}
-          </div>
+              <div
+                onClick={() => {
+                  document.getElementById("coverInput").click();
+                  setDropdownOpen(false);
+                }}
+                style={{ padding: "10px", cursor: "pointer" }}
+              >
+                Change Cover Photo
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      )}
+    </div>
+  </div>
+</div>
+
 
 
       {/* Inbox (only on own profile) */}
