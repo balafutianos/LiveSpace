@@ -58,7 +58,7 @@ body{
 .navbar{
   background: linear-gradient(180deg, var(--navTop), var(--navBot));
   box-shadow: 0 6px 18px rgba(0,0,0,.25);
-  padding: clamp(10px, 1.2vw, 14px) 0;
+  
 }
 .navbar-container{
   max-width: 1180px; margin: 0 auto;
@@ -291,3 +291,15 @@ body{
   box-shadow:0 0 0 3px rgba(242,117,117,.2) !important;
 }
 .signup-button[disabled]{ opacity:.7; cursor:not-allowed; }
+/* full-bleed navbar so the logo hugs the left edge */
+.navbar-container{
+  max-width: none;      /* remove centering */
+  margin: 0;
+  padding-left: 8px;    /* tweak to taste (0–24px) */
+  padding-right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.brand-logo{ margin-left: 0; }
+.login-form{ margin-left: auto; } /* keep login on the far right */
