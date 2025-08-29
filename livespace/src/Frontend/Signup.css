@@ -1,230 +1,293 @@
-body {
-    font-family: 'Lucida Grande', Tahoma, Verdana, Arial, sans-serif;
-    background-color: #acacac;
-    margin: 0;
-    padding: 0;
- 
-  }
-  
-  .signup-page {
-    align-items: center;
-    background-attachment: fixed;
-    background-color: #16202A;
-    background-position: 50%;
-    background-repeat: no-repeat;
-    background-size: cover;
-    display: flex;
-    justify-content: flex-end;
-    min-height: 100vh;
-    padding-right: 20px;
-}
-  
-  .signup-container {
-    background-color: #FCFCFE;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-    width: 400px;
-  }
-  
-  .signup-header h1 {
-    color: #5fdc34;
-    font-size: 36px;
-    font-weight: 700;
-    margin-bottom: 10px;
-}
-  
-  .signup-header p {
-    font-size: 16px;
-    color: #606770;
-    margin-bottom: 20px;
-  }
-  
-  .signup-form {
-    display: flex;
-    flex-direction: column;
-  }
-  
-  .signup-form h2 {
-    font-size: 24px;
-    font-weight: bold;
-    margin-bottom: 10px;
-  }
-  
-  .form-group {
-    margin-bottom: 15px;
-  }
-  
-  .form-group input,
-  .form-group select {
-    width: 80%;
-    padding: 10px;
-    border: 1px solid #ccd0d5;
-    border-radius: 14px;
-    font-size: 13px;
-  }
-  
-  .signup-button {
-    width: 100%;
-    padding: 10px;
-    background-color: #073B;
-    color: #fff;
-    font-size: 16px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  
-  .signup-button:hover {
-    background-color: #07702e;
-  }
-  
-  .forgot-password {
-    margin-top: 10px;
-    text-align: center;
-  }
-  
-  .forgot-password a {
-    color: #07702e;
-    text-decoration: none;
-  }
-  
-  .forgot-password a:hover {
-    text-decoration: underline;
-  }
-  
-  .motto-section {
-    position: absolute;
-    left: 50px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 40%;
-    color: #fcfcfe;
-    text-align: left;
-    font-size: 2rem;
-    font-weight: bold;
-    line-height: 1.5;
-}
-  /* Navbar styles */
-  .navbar {
-    background-color: #1C2939;
-    box-shadow: 0 14px 12px rgba(0, 0, 0, .356);
-    color: #5fdc34;
-    justify-content: space-between;
-    padding: 20px;
+:root{
+  /* Brand palette */
+  --brand-50:  #E9FCF5;
+  --brand-100: #C9F7E8;
+  --brand-300: #7DE8CB;
+  --brand-400: #46DEBA;
+  --brand-500: #19D3A5;   /* primary */
+  --brand-600: #13C19A;
+  --brand-700: #10A485;
+  --brand-800: #0F8C6F;
+
+  --ink:   #0F2530;
+  --muted: #5D7482;
+
+  --surface: #FFFFFF;
+  --surface-soft: #F7FBF9;
+  --border: #D9F2EA;
+
+  --radius-s: 10px;
+  --radius-m: 14px;
+  --radius-l: 20px;
+
+  --shadow-1: 0 2px 6px rgba(15,37,48,.08);
+  --shadow-2: 0 10px 24px rgba(15,37,48,.16);
+  --ring: 0 0 0 4px color-mix(in oklab, var(--brand-500) 24%, transparent);
+
+  /* Page gradient (kept your spirit, softened) */
+  --pageTop: #2AE3A6;
+  --pageMid: #19D3A5;
+  --pageBot: #0FB386;
+
+  /* Navbar */
+  --navTop: #0F2530;
+  --navBot: #0B1E27;
+
+  color-scheme: light dark;
 }
 
-.navbar-container {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.navbar h1 {
-  font-size: 44px;
-  font-weight: bold;
+/* ---------- Base ---------- */
+*{ box-sizing: border-box; }
+html, body, #root{ height: 100%; }
+body{
   margin: 0;
-  font-style:inherit;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+  color: var(--ink);
+   background: url("signup.jpg");
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-.login-form {
+/* Motion respect */
+@media (prefers-reduced-motion: reduce){
+  *{ animation: none !important; transition: none !important; }
+}
+
+/* ---------- Navbar ---------- */
+.navbar{
+  background: linear-gradient(180deg, var(--navTop), var(--navBot));
+  box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  padding: clamp(10px, 1.2vw, 14px) 0;
+}
+.navbar-container{
+  max-width: 1180px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 0 clamp(12px, 2vw, 18px);
+}
+.brand-logo{
+  font-size: clamp(24px, 2.6vw, 34px);
+  font-weight: 900; letter-spacing: .2px;
+  color: var(--brand-400);
+  text-shadow: 0 1px 0 rgba(0,0,0,.15);
+}
+.login-form{
+  display: flex; gap: 10px; flex-wrap: wrap;
+}
+.login-form input{
+  width: min(240px, 38vw);
+  padding: 10px 12px; border-radius: var(--radius-m);
+  border: 1px solid color-mix(in oklab, var(--border) 70%, #0000);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+.login-form input::placeholder{ color: #6e7d85; }
+.login-form input:focus-visible{
+  outline: none; box-shadow: var(--ring), var(--shadow-1);
+  border-color: var(--brand-500);
+}
+.login-button{
+  border-radius: var(--radius-m); border: none;
+  padding: 10px 14px; font-weight: 800;
+  color: #06231A;
+  background: linear-gradient(180deg, var(--brand-400), var(--brand-600));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), var(--shadow-2);
+  cursor: pointer; transition: transform .08s ease, filter .15s ease;
+}
+.login-button:hover{ filter: brightness(1.05); }
+.login-button:active{ transform: translateY(1px); }
+
+/* ---------- Layout ---------- */
+.signup-page{
+  display: grid;
+  grid-template-columns: 1fr min(400px, 92vw);
+  align-items: center;
+  min-height: 100vh;
+  gap: clamp(16px, 3vw, 48px);
+  padding: clamp(24px, 4vw, 40px) clamp(16px, 4vw, 32px);
+  position: relative;
+}
+.motto-section{
+  color: #fff; text-shadow: 0 1px 0 rgba(0,0,0,.25);
+}
+.motto-section h1{
+  font-size: clamp(40px, 6vw, 76px);
+  font-weight: 900; margin: 0 0 10px;
+  line-height: 1.02;
+}
+.motto-section p{
+  font-size: clamp(16px, 1.8vw, 20px);
+  line-height: 1.6; max-width: 52ch;
+}
+
+/* ---------- Signup Card ---------- */
+.signup-container{
+  background: var(--surface);
+  border-radius: var(--radius-l);
+  padding: clamp(18px, 2.2vw, 24px);
+  width: 100%;
+  box-shadow: var(--shadow-2);
+  border: 1px solid var(--border);
+}
+.signup-header h1{
+  font-size: clamp(24px, 2.2vw, 32px);
+  font-weight: 900; color: var(--brand-600);
+  margin: 0 0 6px;
+}
+.signup-header p{ margin: 0 0 16px; color: var(--muted); }
+.signup-form{ display: flex; flex-direction: column; gap: 12px; }
+.signup-form h2{ margin: 4px 0 4px; font-size: 20px; font-weight: 800; }
+
+.form-group {
   display: flex;
-  gap: 30px;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.login-form input {
-  padding: 10px;
-  border-radius: 4px;
-  border: 1px solid #ccd0d5;
-  font-size: 14px;
+.form-group input {
+  padding: 12px;
+  border-radius: var(--radius-m);
+  border: 1px solid #cce5dc;
+  background: var(--surface-soft);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.8), var(--shadow-1);
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
 
-.login-button {
-  background: linear-gradient(15deg, #10d154, #10d154);
-  border: none;
-  border-radius: 4px;
-  color: #16113a;
-  cursor: pointer;
-  padding: 7px 10px;
+.form-group input:focus-visible {
+  border-color: var(--brand-500);
+  box-shadow: var(--ring), var(--shadow-1);
+  outline: none;
+}
+
+.form-group input:user-invalid { 
+  border-color: #F27575; 
+}
+
+.form-group input:user-valid { 
+  border-color: #3CCB9E; 
 }
 
 
-.login-button:hover {
-  background-color: #155db3;
+/* Single-column when needed */
+@media (max-width: 480px){
+  .form-group{ grid-template-columns: 1fr; }
 }
-@media (max-width: 768px) {
-  .signup-page {
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start;
-    padding: 20px 10px;
+
+.signup-button{
+  padding: 12px; border-radius: var(--radius-m);
+  border: none; font-weight: 900;
+  background: linear-gradient(180deg, var(--brand-400), var(--brand-700));
+  color: #06231A; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), var(--shadow-2);
+  transition: transform .08s ease, filter .15s ease;
+}
+.signup-button:hover{ filter: brightness(1.06); }
+.signup-button:active{ transform: translateY(1px); }
+
+.forgot-password{
+  text-align: center; margin-top: 10px; color: var(--muted);
+}
+.forgot-password a{
+  color: var(--brand-800); text-decoration: none; font-weight: 600;
+}
+.forgot-password a:hover{ text-decoration: underline; }
+
+/* Inline status helpers */
+.is-error{ border-color:#F27575 !important; box-shadow: 0 0 0 3px rgba(242,117,117,.2) !important; }
+.is-success{ border-color:#3CCB9E !important; box-shadow: 0 0 0 3px rgba(60,203,158,.2) !important; }
+
+/* ---------- Dark mode ---------- */
+@media (prefers-color-scheme: dark){
+  :root{
+    --ink: #E7F5F0;
+    --muted: #A5BDC9;
+    --surface: #0F1A1F;
+    --surface-soft: #0C161A;
+    --border: #143438;
+    --ring: 0 0 0 4px color-mix(in oklab, var(--brand-500) 32%, transparent);
+    --shadow-1: 0 2px 6px rgba(0,0,0,.5);
+    --shadow-2: 0 14px 30px rgba(0,0,0,.6);
   }
+  .signup-container,
+  .login-form input{
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .form-group input{
+    background: var(--surface-soft);
+    color: var(--ink);
+  }
+  .brand-logo{ color: var(--brand-300); }
+}
 
-  .motto-section {
-    position: static;
-    transform: none;
-    width: 100%;
+/* ---------- Responsive shell ---------- */
+@media (max-width: 900px){
+  .signup-page{
+    grid-template-columns: 1fr;
+    justify-items: center;
     text-align: center;
-    margin-bottom: 20px;
-    font-size: 1.4rem;
-    padding: 0 10px;
   }
-
-  .signup-container {
-    width: 100%;
-    max-width: 350px;
-    box-shadow: none;
-    padding: 15px;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .form-group input {
-    width: 100%;
-  }
-
-  .signup-header h1 {
-    font-size: 28px;
-    text-align: center;
-  }
-
-  .signup-header p {
-    text-align: center;
-    font-size: 14px;
-  }
-
-  .forgot-password {
-    font-size: 14px;
-  }
-
-  .navbar {
-    flex-direction: column;
-    padding: 10px 15px;
-    text-align: center;
-  }
-
-  .navbar-container {
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .login-form {
-    flex-direction: column;
-    gap: 10px;
-    width: 100%;
-  }
-
-  .login-form input,
-  .login-button {
-    width: 100%;
-  }
-
-  .navbar h1 {
-    font-size: 32px;
-  }
+  .motto-section p{ margin-inline: auto; }
 }
+
+/* Utility: visually hidden text for accessibility (e.g., form labels) */
+.visually-hidden{
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* Wrap each input + error text nicely */
+.login-form .input-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+/* General error message at top of form */
+.form-error {
+  width: 100%;
+  background: rgba(242, 117, 117, 0.12);
+  color: #ffd3d3;
+  border: 1px solid rgba(242, 117, 117, 0.35);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+/* Field-level error text */
+.field-error {
+  margin-top: 6px;
+  color: #ffb3b3;
+  font-size: 12px;
+}
+
+/* Error outline for inputs (you already have helpers; this matches them) */
+.is-error {
+  border-color: #F27575 !important;
+  box-shadow: 0 0 0 3px rgba(242, 117, 117, .2) !important;
+}
+
+/* Disabled state */
+.login-button[disabled] {
+  opacity: .7;
+  cursor: not-allowed;
+}
+
+.signup-form .input-wrap { display:flex; flex-direction:column; }
+.help-text { margin-top:6px; font-size:12px; color: var(--muted); }
+.form-error {
+  width:100%;
+  background: rgba(242,117,117,.12);
+  color:#ffd3d3;
+  border:1px solid rgba(242,117,117,.35);
+  border-radius:10px;
+  padding:8px 10px;
+  margin-bottom:8px;
+}
+.field-error { margin-top:6px; color:#ffb3b3; font-size:12px; }
+.is-error {
+  border-color:#F27575 !important;
+  box-shadow:0 0 0 3px rgba(242,117,117,.2) !important;
+}
+.signup-button[disabled]{ opacity:.7; cursor:not-allowed; }
