@@ -1,460 +1,322 @@
-// Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Link } from "react-router-dom";
+import { db } from "./firebase";
 import {
   collection,
   doc,
   getDoc,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   updateDoc,
   where,
-  serverTimestamp,
-  setDoc,
 } from "firebase/firestore";
-import { db } from "./firebase";
-import NotificationBell from "./NotificationBell";
-import MessageInbox from "./MessageInbox";
-const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
-const FIREBASE_DEFAULT_IMAGE =
-  "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
+import "./navbar-dark.css";
 
+/**
+ * Props expected:
+ * - currentUserId
+ * - searchTerm, setSearchTerm, handleSearch, searchResults
+ */
 export default function Navbar({
   currentUserId,
-  searchTerm = "",
-  setSearchTerm = () => {},
-  handleSearch = () => {},
+  searchTerm,
+  setSearchTerm,
+  handleSearch,
   searchResults = [],
 }) {
-  const [pending, setPending] = useState([]);   // FriendRequests
-  const [senders, setSenders] = useState({});   // fromId -> user data
-  const [openReq, setOpenReq] = useState(false);
-const navigate = useNavigate();
-  const [myPhoto, setMyPhoto] = useState(FALLBACK_IMAGE);
+  const navigate = useNavigate();
+  const [me, setMe] = useState(null);
 
-  const reqWrapRef = useRef(null); // wraps the Requests button + dropdown
-  const pendingCount = pending.length;
+  // counts + lists
+  const [pendingReqs, setPendingReqs] = useState([]);   // FriendRequests docs (to me, pending)
+  const [notifs, setNotifs] = useState([]);             // latest notifications to me
+  const [unreadMsgCount, setUnreadMsgCount] = useState(0);
 
-  // Fetch my avatar
+  // UI state
+  const [openSearch, setOpenSearch] = useState(false);
+  const [openFriends, setOpenFriends] = useState(false);
+  const [openNotifs, setOpenNotifs] = useState(false);
+
+  const inputRef = useRef(null);
+
+  // load my mini profile for avatar + name
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!currentUserId) return;
+      if (!currentUserId) return setMe(null);
       try {
         const snap = await getDoc(doc(db, "Users", currentUserId));
         if (!alive) return;
-        if (snap.exists()) {
-          const d = snap.data();
-          const photo =
-            !d.photo || d.photo === "" || d.photo === FIREBASE_DEFAULT_IMAGE
-              ? FALLBACK_IMAGE
-              : d.photo;
-          setMyPhoto(photo);
-        } else {
-          setMyPhoto(FALLBACK_IMAGE);
-        }
-      } catch {
-        setMyPhoto(FALLBACK_IMAGE);
-      }
+        setMe(snap.exists() ? snap.data() : null);
+      } catch { setMe(null); }
     })();
     return () => { alive = false; };
   }, [currentUserId]);
 
-  // Close dropdown on outside click / Esc
-  useEffect(() => {
-    function onDocClick(e) {
-      if (!openReq) return;
-      if (reqWrapRef.current && !reqWrapRef.current.contains(e.target)) {
-        setOpenReq(false);
-      }
-    }
-    function onEsc(e) {
-      if (e.key === "Escape") setOpenReq(false);
-    }
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onEsc);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onEsc);
-    };
-  }, [openReq]);
-
-  // Subscribe to my pending requests
+  // subscribe: pending friend requests
   useEffect(() => {
     if (!currentUserId) return;
-    const q = query(
+    const qy = query(
       collection(db, "FriendRequests"),
       where("toId", "==", currentUserId),
-      where("status", "==", "pending")
+      where("status", "==", "pending"),
+      orderBy("createdAt", "desc")
     );
-    const unsub = onSnapshot(q, async (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setPending(rows);
-
-      // fetch sender data (avatars, names)
-      const ids = [...new Set(rows.map((r) => r.fromId))];
-      const map = {};
-      await Promise.all(
-        ids.map(async (uid) => {
-          const u = await getDoc(doc(db, "Users", uid));
-          if (u.exists()) {
-            const d = u.data();
-            map[uid] = {
-              firstName: d.firstName || "",
-              lastName: d.lastName || "",
-              email: d.email || "",
-              photo:
-                !d.photo || d.photo === "" || d.photo?.includes("defaultavatar.jpg")
-                  ? FALLBACK_IMAGE
-                  : d.photo,
-            };
-          } else {
-            map[uid] = { firstName: "", lastName: "", email: "", photo: FALLBACK_IMAGE };
-          }
-        })
-      );
-      setSenders(map);
+    const unsub = onSnapshot(qy, (snap) => {
+      setPendingReqs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
-    return () => unsub();
+    return unsub;
   }, [currentUserId]);
 
-  const handleAccept = async (req) => {
+  // subscribe: latest notifications (and unread count via filter)
+  useEffect(() => {
+    if (!currentUserId) return;
+    const qy = query(
+      collection(db, "Notifications"),
+      where("recipientId", "==", currentUserId),
+      orderBy("createdAt", "desc"),
+      limit(12)
+    );
+    const unsub = onSnapshot(qy, (snap) => {
+      setNotifs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, [currentUserId]);
+
+  // subscribe: unread messages count (⚠️ adjust if your schema differs)
+  useEffect(() => {
+    if (!currentUserId) return;
+    // If your unread flag/collection differs, update this query.
+    let unsub;
     try {
-      await updateDoc(doc(db, "FriendRequests", req.id), {
-        status: "accepted",
-        respondedAt: serverTimestamp(),
-      });
-      const [a, b] = [req.fromId, req.toId].sort();
-      await setDoc(
-        doc(db, "Friends", `${a}_${b}`),
-        { userIds: [a, b], createdAt: serverTimestamp() },
-        { merge: true }
+      const qy = query(
+        collection(db, "Messages"),
+        where("toId", "==", currentUserId),
+        where("read", "==", false)
       );
-    } catch (e) {
-      console.error("Accept error details:", e?.code, e?.message);
-      alert(`Could not accept: ${e?.code || ""} ${e?.message || ""}`);
+      unsub = onSnapshot(qy, (snap) => setUnreadMsgCount(snap.size || 0));
+    } catch {
+      // collection may not exist yet—just ignore
+    }
+    return () => unsub && unsub();
+  }, [currentUserId]);
+
+  const displayName = useMemo(() => {
+    if (!me) return "";
+    const fn = me.firstName || "";
+    const ln = me.lastName || "";
+    const name = `${fn} ${ln}`.trim();
+    return name || (me.email || "");
+  }, [me]);
+
+  const onSearchKey = (e) => {
+    if (e.key === "Enter") {
+      handleSearch?.();
+      setOpenSearch(true);
+    } else if (e.key === "Escape") {
+      setOpenSearch(false);
     }
   };
 
-  const handleDecline = async (req) => {
-    try {
-      await updateDoc(doc(db, "FriendRequests", req.id), {
-        status: "declined",
-        respondedAt: serverTimestamp(),
-      });
-    } catch (e) {
-      console.error("Decline error:", e);
-      alert("Could not decline request.");
-    }
+  const closeAllPopovers = () => {
+    setOpenSearch(false);
+    setOpenFriends(false);
+    setOpenNotifs(false);
   };
 
-  const hasSearchResults = useMemo(
-    () => Array.isArray(searchResults) && searchResults.length > 0,
-    [searchResults]
-  );
+  // friend actions (lightweight): Accept → status: accepted | Decline → status: declined
+  const acceptFriend = async (reqId) => {
+    try { await updateDoc(doc(db, "FriendRequests", reqId), { status: "accepted" }); }
+    catch (e) { console.error("acceptFriend error", e); }
+  };
+  const declineFriend = async (reqId) => {
+    try { await updateDoc(doc(db, "FriendRequests", reqId), { status: "declined" }); }
+    catch (e) { console.error("declineFriend error", e); }
+  };
+
+  // mark notification as read and maybe navigate to context
+  const openNotification = async (n) => {
+    try { await updateDoc(doc(db, "Notifications", n.id), { read: true }); } catch {}
+    if (n.postId) {
+      // If you have a post route, point there; otherwise go to the actor profile.
+      navigate(`/post/${n.postId}`);
+    } else if (n.actorId) {
+      navigate(`/profile/${n.actorId}`);
+    }
+    setOpenNotifs(false);
+  };
+
+  const gotoProfile = (uid) => {
+    setOpenSearch(false);
+    navigate(`/profile/${uid}`);
+  };
 
   return (
-    <nav
-      style={{
-        backgroundColor: "#122939",
-        color: "#fff",
-        padding: "10px 20px 18px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        position: "relative",
-      }}
-    >
-      {/* LEFT: Requests + NotificationBell */}
-      <div style={{ position: "absolute", left: 16, top: 10, display: "flex", alignItems: "center", gap: 10 }}>
-        {/* Requests button + dropdown */}
-        <div ref={reqWrapRef} style={{ position: "relative", display: "inline-block" }}>
+    <header className="nav-wrap" onMouseLeave={() => {/* keep open unless explicitly toggled */}}>
+      {/* Brand */}
+      <div className="brand" onClick={() => { closeAllPopovers(); navigate("/"); }}>
+        <span className="brand-mark">LivespaceZone</span>
+      </div>
+
+      {/* Search Center */}
+      <div className="search-area">
+        <div className="search-pill">
+          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M15.5 14h-.79l-.28-.27a6.471 6.471 0 0 0 1.57-4.23C15.99 6.01 13.98 4 11.5 4S7 6.01 7 9.5 9.01 15 11.5 15c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l4.25 4.25a1 1 0 0 1-1.41 1.41L15.5 14zM9 9.5C9 7.57 10.57 6 12.5 6S16 7.57 16 9.5 14.43 13 12.5 13 9 11.43 9 9.5z"
+              fill="currentColor"
+            />
+          </svg>
+          <input
+            ref={inputRef}
+            value={searchTerm}
+            onChange={(e) => { setSearchTerm(e.target.value); if (!openSearch) setOpenSearch(true); }}
+            onKeyDown={onSearchKey}
+            onFocus={() => setOpenSearch(true)}
+            placeholder="Search by name or email..."
+          />
           <button
-            onClick={() => setOpenReq((o) => !o)}
-            title="Friend requests"
-            style={{
-              background: "transparent",
-              border: "1px solid rgba(255,255,255,0.25)",
-              color: "#fff",
-              borderRadius: 20,
-              padding: "6px 10px",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginTop: "33px",
-            }}
+            className="btn-search"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { handleSearch?.(); setOpenSearch(true); inputRef.current?.focus(); }}
           >
-            <span style={{ fontSize: 16 }}>🔔</span>
-            <span style={{ fontSize: 13 }}>Requests</span>
-            {pendingCount > 0 && (
-              <span
-                style={{
-                  marginLeft: 6,
-                  minWidth: 18,
-                  height: 18,
-                  borderRadius: 9,
-                  background: "#27D496",
-                  color: "#052023",
-                  fontWeight: 700,
-                  fontSize: 12,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "0 6px",
-                }}
-              >
-                {pendingCount}
-              </span>
+            Search
+          </button>
+        </div>
+
+        {openSearch && searchTerm && (
+          <div className="results" onMouseDown={(e) => e.preventDefault()}>
+            {searchResults.length === 0 ? (
+              <div className="result empty">No results</div>
+            ) : (
+              searchResults.map((u) => (
+                <button
+                  key={u.id}
+                  className="result"
+                  onClick={() => gotoProfile(u.id)}
+                  title={`${u.firstName || ""} ${u.lastName || ""}`}
+                >
+                  <img src={u.photo || "https://i.imgur.com/qzsiOuh.png"} alt="" />
+                  <div className="r-meta">
+                    <div className="r-name">{(u.firstName || "") + " " + (u.lastName || "")}</div>
+                    <div className="r-sub">{u.email}</div>
+                  </div>
+                </button>
+              ))
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Right side */}
+      <div className="right">
+
+        {/* Messages button (navigates) */}
+        <button
+          className="icon-btn"
+          title="Messages"
+          onClick={() => { closeAllPopovers(); navigate("/messages"); }}
+        >
+          {/* chat bubble */}
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z" fill="currentColor"/>
+          </svg>
+          {unreadMsgCount > 0 && <span className="badge">{unreadMsgCount}</span>}
+        </button>
+
+        {/* Friends (pending requests dropdown) */}
+        <div className="icon-pop">
+          <button
+            className={`icon-btn ${openFriends ? "is-open": ""}`}
+            title="Friend requests"
+            onClick={() => { setOpenFriends((v) => !v); setOpenNotifs(false); setOpenSearch(false); }}
+          >
+            {/* users */}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.96 1.97 3.45V19a1 1 0 0 1-1 1h6a1 1 0 0 0 1-1v-.5c0-2.33-4.67-3.5-7-3.5z" fill="currentColor"/>
+            </svg>
+            {pendingReqs.length > 0 && <span className="badge">{pendingReqs.length}</span>}
           </button>
 
- {/* <button
-  onClick={() => navigate("/messages")}
-  title="Messages"
-  style={{
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    background: "#fff",
-    border: "1px solid #e5e7eb",
-    padding: "8px 12px",
-    borderRadius: 10,
-    cursor: "pointer",
-    fontWeight: 600,
-  }}
->
-  💬 Messages
-</button> */}
-
-          {/* Dropdown anchored under Requests */}
-          {openReq && (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 8px)",
-                left: 0,
-                width: 340,
-                background: "#fff",
-                color: "#000",
-                borderRadius: 8,
-                boxShadow: "0 12px 24px rgba(0,0,0,0.25)",
-                zIndex: 10000,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  padding: "10px 12px",
-                  fontWeight: 700,
-                  borderBottom: "1px solid #eee",
-                  background: "#f7f9fb",
-                }}
-              >
-                Friend Requests
-              </div>
-
-              {pending.length === 0 ? (
-                <div style={{ padding: 12, color: "#666" }}>No pending requests</div>
+          {openFriends && (
+            <div className="popover">
+              <div className="popover-title">Friend Requests</div>
+              {pendingReqs.length === 0 ? (
+                <div className="popover-empty">No pending requests.</div>
               ) : (
-                pending.map((req) => {
-                  const s = senders[req.fromId] || {};
-                  return (
-                    <div
-                      key={req.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "10px 12px",
-                        borderBottom: "1px solid #f0f0f0",
-                      }}
-                    >
-                      <img
-                        src={s.photo || FALLBACK_IMAGE}
-                        alt="sender"
-                        style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }}
-                      />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>
-                          {s.firstName} {s.lastName}
-                        </div>
-                        {s.email && <div style={{ fontSize: 12, color: "#666" }}>{s.email}</div>}
-                      </div>
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button
-                          onClick={() => handleAccept(req)}
-                          style={{
-                            background: "#27D496",
-                            color: "#052023",
-                            border: "none",
-                            padding: "6px 8px",
-                            borderRadius: 6,
-                            cursor: "pointer",
-                            fontWeight: 700,
-                            fontSize: 12,
-                          }}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={() => handleDecline(req)}
-                          style={{
-                            background: "#eee",
-                            color: "#333",
-                            border: "1px solid #ddd",
-                            padding: "6px 8px",
-                            borderRadius: 6,
-                            cursor: "pointer",
-                            fontSize: 12,
-                          }}
-                        >
-                          Decline
-                        </button>
-                      </div>
+                pendingReqs.map((r) => (
+                  <div key={r.id} className="row">
+                    <div className="row-main">
+                      <div className="row-title">{r.fromName || "Someone"}</div>
+                      <div className="row-sub">{r.fromEmail || ""}</div>
                     </div>
-                  );
-                })
+                    <div className="row-actions">
+                      <button className="mini-btn approve" onClick={() => acceptFriend(r.id)}>Accept</button>
+                      <button className="mini-btn" onClick={() => declineFriend(r.id)}>Decline</button>
+                    </div>
+                  </div>
+                ))
               )}
+              <div className="popover-foot">
+                <button className="mini-link" onClick={() => { navigate(`/profile/${currentUserId}`); setOpenFriends(false); }}>
+                  Open inbox
+                </button>
+              </div>
             </div>
           )}
         </div>
 
-        {/* Notification bell placed right next to Requests */}
-        {currentUserId && (
-          <div style={{ marginTop: "33px" }}>
-            <NotificationBell currentUserId={currentUserId} />
-          </div>
-        )}
-      </div>
-
-<MessageInbox currentUserId={currentUserId} />
-
-      {/* Brand */}
-      <div
-        style={{
-          fontWeight: "bold",
-          fontSize: "18px",
-          color: "#27D496",
-          marginBottom: 10,
-        }}
-      >
-        LiveSpaceZone
-      </div>
-
-      {/* My profile (top-right) */}
-      {currentUserId && (
-        <div style={{ position: "absolute", right: 16, top: 10 }}>
-          <Link
-            to={`/profile/${currentUserId}`}
-            title="Go to my profile"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "6px 10px",
-              borderRadius: 20,
-              border: "1px solid rgba(255,255,255,0.25)",
-              color: "#fff",
-              textDecoration: "none",
-              background: "transparent",
-              marginTop: "33px",
-              marginRight: "102px",
-            }}
+        {/* Notifications dropdown */}
+        <div className="icon-pop">
+          <button
+            className={`icon-btn ${openNotifs ? "is-open": ""}`}
+            title="Notifications"
+            onClick={() => { setOpenNotifs((v) => !v); setOpenFriends(false); setOpenSearch(false); }}
           >
-            <img
-              src={myPhoto}
-              alt="Me"
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: "50%",
-                objectFit: "cover",
-                border: "2px solid rgba(255,255,255,0.2)",
-              }}
-            />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>My profile</span>
-          </Link>
+            {/* bell */}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2z" fill="currentColor"/>
+            </svg>
+            {notifs.filter(n => !n.read).length > 0 && (
+              <span className="badge">{notifs.filter(n=>!n.read).length}</span>
+            )}
+          </button>
+
+          {openNotifs && (
+            <div className="popover">
+              <div className="popover-title">Notifications</div>
+              {notifs.length === 0 ? (
+                <div className="popover-empty">Nothing new.</div>
+              ) : (
+                notifs.map((n) => (
+                  <button key={n.id} className={`row ${n.read ? "" : "unread"}`} onClick={() => openNotification(n)}>
+                    <div className="row-main">
+                      <div className="row-title">
+                        <strong>{n.actorName || "Someone"}</strong>{` `}
+                        {n.type === "post" ? "posted" : n.type === "like" ? "liked" : n.type === "comment" ? "commented" : "updated"}
+                      </div>
+                      {n.text && <div className="row-sub">{n.text}</div>}
+                    </div>
+                  </button>
+                ))
+              )}
+              <div className="popover-foot">
+                <button className="mini-link" onClick={() => setOpenNotifs(false)}>Close</button>
+              </div>
+            </div>
+          )}
         </div>
-      )}
 
-      {/* Search */}
-      <div style={{ display: "flex", gap: 8, position: "relative", width: "100%", maxWidth: 420 }}>
-        <input
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
-          placeholder="Search by name or email..."
-          style={{
-            padding: "8px 12px",
-            borderRadius: 6,
-            border: "1px solid rgba(255,255,255,0.15)",
-            width: "100%",
-            outline: "none",
-          }}
-        />
-        <button
-          onClick={handleSearch}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 6,
-            border: "none",
-            background: "#27D496",
-            color: "#052023",
-            cursor: "pointer",
-            fontWeight: 700,
-          }}
-        >
-          Search
-        </button>
-
-        {Array.isArray(searchResults) && searchResults.length > 0 && (
-          <div
-            style={{
-              position: "absolute",
-              top: "44px",
-              left: 0,
-              right: 0,
-              background: "#fff",
-              color: "#000",
-              borderRadius: "0 0 6px 6px",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-              maxHeight: "220px",
-              overflowY: "auto",
-              zIndex: 1000,
-            }}
-          >
-            {searchResults.map((u) => (
-              <a
-                key={u.id}
-                href={`/profile/${u.id}`}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "8px",
-                  textDecoration: "none",
-                  color: "inherit",
-                  borderBottom: "1px solid #eee",
-                }}
-              >
-                <img
-                  src={u.photo || FALLBACK_IMAGE}
-                  alt="user"
-                  style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }}
-                />
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>
-                    {u.firstName} {u.lastName}
-                  </div>
-                  <div style={{ color: "#666", fontSize: 12 }}>{u.email}</div>
-                </div>
-              </a>
-            ))}
+        {/* Me */}
+        <div className="me" onClick={() => { closeAllPopovers(); navigate(`/profile/${currentUserId}`); }}>
+          <div className="me-img">
+            <img src={me?.photo || "https://i.imgur.com/qzsiOuh.png"} alt="" />
           </div>
-        )}
+          <span className="me-name">{displayName || "Profile"}</span>
+        </div>
       </div>
-    </nav>
+    </header>
   );
 }
