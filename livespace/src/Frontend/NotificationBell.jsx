@@ -1,5 +1,5 @@
 // NotificationBell.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { db } from "./firebase";
 import {
   collection, query, where, orderBy, limit, onSnapshot, updateDoc, doc
@@ -11,47 +11,48 @@ export default function NotificationBell({ currentUserId }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
 
-  const unread = items.filter(i => !i.read).length;
-
   useEffect(() => {
     if (!currentUserId) return;
-    const q = query(
+    const qy = query(
       collection(db, "Notifications"),
       where("recipientId", "==", currentUserId),
       orderBy("createdAt", "desc"),
       limit(25)
     );
-    const unsub = onSnapshot(q, (snap) => {
+    const unsub = onSnapshot(qy, (snap) => {
       const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setItems(rows);
     });
     return () => unsub();
   }, [currentUserId]);
 
+  // Hide friend_request notifications in the bell
+  const visibleItems = useMemo(
+    () => items.filter(n => n.type !== "friend_request"),
+    [items]
+  );
+  const unread = visibleItems.filter(i => !i.read).length;
+
   const markRead = async (id) => {
-    try {
-      await updateDoc(doc(db, "Notifications", id), { read: true });
-    } catch (e) {
-      console.error("markRead", e);
-    }
+    try { await updateDoc(doc(db, "Notifications", id), { read: true }); }
+    catch (e) { console.error("markRead", e); }
   };
 
   const fmtWhen = (createdAt) => {
     try {
       if (!createdAt) return "";
-      // Firestore Timestamp
       if (createdAt.seconds) return new Date(createdAt.seconds * 1000).toLocaleString();
-      // JS Date or ISO string
       return new Date(createdAt).toLocaleString();
     } catch { return ""; }
   };
 
   const labelFor = (type) => {
     switch (type) {
-      case "post":    return "posted";
-      case "like":    return "liked your post";
-      case "comment": return "commented on your post";
-      default:        return "did something";
+      case "post":           return "posted";
+      case "like":           return "liked your post";
+      case "comment":        return "commented on your post";
+      case "friend_accept":  return "accepted your friend request";
+      default:               return "did something";
     }
   };
 
@@ -107,11 +108,11 @@ export default function NotificationBell({ currentUserId }) {
             zIndex: 50
           }}
         >
-          {items.length === 0 && (
+          {visibleItems.length === 0 && (
             <div style={{ padding: 12, color: "#555" }}>No notifications</div>
           )}
 
-          {items.map((n) => {
+          {visibleItems.map((n) => {
             const first = (n.actorFirstName || "").trim();
             const last  = (n.actorLastName  || "").trim();
             const nameFromParts = `${first} ${last}`.trim();
@@ -122,7 +123,7 @@ export default function NotificationBell({ currentUserId }) {
             return (
               <a
                 key={n.id}
-                href={n.postId ? `/post/${n.postId}` : "#"}
+                href={n.postId ? `/post/${n.postId}` : (n.actorId ? `/profile/${n.actorId}` : "#")}
                 onClick={() => markRead(n.id)}
                 style={{
                   display: "flex",
@@ -157,23 +158,11 @@ export default function NotificationBell({ currentUserId }) {
                   >
                     {line}
                   </div>
-
-                  {/* Show a short snippet only for comments */}
                   {n.type === "comment" && n.text && (
-                    <div
-                      style={{
-                        fontSize: 13,
-                        color: "#444",
-                        marginTop: 2,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis"
-                      }}
-                    >
+                    <div style={{ fontSize: 13, color: "#444", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       “{n.text}”
                     </div>
                   )}
-
                   <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
                     {fmtWhen(n.createdAt)}
                   </div>

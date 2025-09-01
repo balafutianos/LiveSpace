@@ -11,7 +11,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
 
 import PhotoModal from "./PhotoModal";
-import Navbar from "./Navbar";
+// ⛔️ Navbar removed — now mounted globally in App.jsx
 import ProfileInfo from "./Profileinfo";
 import Likefeature from "./Likefeature";
 import FriendButton from "./FriendButton";
@@ -174,8 +174,7 @@ export default function Profile() {
     phone: "", email: "", sex: "Male", birthday: "", work: "", about: "", city: "",
   });
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
+  // ⛔️ Removed searchTerm/searchResults; Navbar now owns search
 
   const [postText, setPostText] = useState("");
   const [postImage, setPostImage] = useState(null);
@@ -373,7 +372,7 @@ export default function Profile() {
     }
   }
 
-  // ---------- FIXED: client-side sort/limit (no composite index needed)
+  // client-side sort/limit for photos grid
   async function fetchRecentPhotos(uid) {
     try {
       if (!uid) return;
@@ -500,68 +499,7 @@ export default function Profile() {
     }
   };
 
-  /* ---------- Search (Navbar) ---------- */
-  const handleSearch = async () => {
-    const raw = (searchTerm || "").trim();
-    if (!raw) { setSearchResults([]); return; }
-    try {
-      if (raw.includes("@")) {
-        const qEmail = query(collection(db, "Users"), where("email", "==", raw));
-        const sEmail = await getDocs(qEmail);
-        const results = sEmail.docs.map((d) => {
-          const data = d.data();
-          const photo =
-            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-              ? FALLBACK_IMAGE
-              : data.photo;
-          return { id: d.id, ...data, photo };
-        });
-        setSearchResults(results);
-        return;
-      }
-
-      const variants = [raw, raw.toLowerCase(), capitalize(raw.toLowerCase()), raw.toUpperCase()];
-      const seen = new Set();
-      const results = [];
-
-      for (const v of variants) {
-        const q1 = query(collection(db, "Users"), where("firstName", "==", v));
-        const s1 = await getDocs(q1);
-        s1.forEach((d) => {
-          if (seen.has(d.id)) return;
-          seen.add(d.id);
-          const data = d.data();
-          const photo =
-            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-              ? FALLBACK_IMAGE
-              : data.photo;
-          results.push({ id: d.id, ...data, photo });
-        });
-
-        const q2 = query(collection(db, "Users"), where("lastName", "==", v));
-        const s2 = await getDocs(q2);
-        s2.forEach((d) => {
-          if (seen.has(d.id)) return;
-          seen.add(d.id);
-          const data = d.data();
-          const photo =
-            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-              ? FALLBACK_IMAGE
-              : data.photo;
-          results.push({ id: d.id, ...data, photo });
-        });
-
-        if (results.length > 0) break;
-      }
-
-      setSearchResults(results);
-    } catch (err) {
-      console.error("Search error:", err);
-      setSearchResults([]);
-    }
-  };
-
-  /* ---------- Save/Cancel profile ---------- */
+  // Save/Cancel profile
   const handleSaveProfile = async () => {
     if (!auth.currentUser || !isOwnProfile) return;
     try {
@@ -641,13 +579,7 @@ export default function Profile() {
 
   return (
     <div className="profile-shell">
-      <Navbar
-        currentUserId={auth.currentUser?.uid}
-        searchTerm={searchTerm}
-        setSearchTerm={setSearchTerm}
-        handleSearch={handleSearch}
-        searchResults={searchResults}
-      />
+      {/* Navbar removed — it’s global now */}
 
       {/* Cover */}
       <div className="profile-cover">
