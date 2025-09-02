@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db, storage } from "./firebase";
+import "./Profile.css";
 
 import {
   doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc,
