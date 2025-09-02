@@ -1,6 +1,6 @@
 // Likefeature.jsx
 import React, { useMemo, useState } from "react";
-import { db, auth } from "./firebase";
+import { db } from "./firebase";
 import {
   doc,
   updateDoc,
@@ -16,7 +16,7 @@ const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 
 export default function Likefeature({
   postId,
-  postOwnerId,          // <-- new prop
+  postOwnerId,
   likes = [],
   currentUserId,
   onChange = () => {},
@@ -40,7 +40,7 @@ export default function Likefeature({
     try {
       setSaving(true);
 
-      // Optimistic UI update
+      // optimistic
       const nextLikes = hasLiked
         ? likes.filter((id) => id !== currentUserId)
         : [...likes, currentUserId];
@@ -48,15 +48,11 @@ export default function Likefeature({
 
       const postRef = doc(db, "Posts", postId);
       if (hasLiked) {
-        await updateDoc(postRef, {
-          likes: arrayRemove(currentUserId),
-        });
+        await updateDoc(postRef, { likes: arrayRemove(currentUserId) });
       } else {
-        await updateDoc(postRef, {
-          likes: arrayUnion(currentUserId),
-        });
+        await updateDoc(postRef, { likes: arrayUnion(currentUserId) });
 
-        // --- create notification for post owner ---
+        // notify post owner
         if (postOwnerId && postOwnerId !== currentUserId) {
           try {
             const meSnap = await getDoc(doc(db, "Users", currentUserId));
@@ -82,8 +78,7 @@ export default function Likefeature({
       }
     } catch (err) {
       console.error("Error toggling like:", err);
-      // revert optimistic update on error
-      onChange(likes);
+      onChange(likes); // revert optimistic on error
       alert("Could not update like. Please try again.");
     } finally {
       setSaving(false);

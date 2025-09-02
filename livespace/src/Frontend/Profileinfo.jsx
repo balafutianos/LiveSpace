@@ -165,24 +165,7 @@ function ProfileInfo({
         </div>
       </div>
 
-      {/* Right: Friends + Photos */}
-      <div style={{ flex: 1 }}>
-        <div
-          style={{
-            border: "1px solid #ccc",
-            borderRadius: "4px",
-            backgroundColor: "#f4f4f4",
-            padding: "10px",
-            marginTop: "-64px"
-          }}
-        >
-          <h4 style={{ marginTop: 0 }}>Friends</h4>
-          <FriendList userId={profileUserId} max={12} />
-        </div>
-
-        {/* Photos box (new) */}
-        <PhotoGrid userId={profileUserId} max={12} />
-      </div>
+    
     </div>
   );
 }

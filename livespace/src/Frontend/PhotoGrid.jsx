@@ -3,7 +3,13 @@ import React, { useEffect, useState } from "react";
 import { db } from "./firebase";
 import { collection, query, where, orderBy, limit, onSnapshot } from "firebase/firestore";
 
-export default function PhotoGrid({ userId, max = 12 }) {
+/**
+ * Props:
+ *  - userId (required)
+ *  - max (default 12)
+ *  - onOpen(photo) optional: called when a tile is clicked
+ */
+export default function PhotoGrid({ userId, max = 12, onOpen }) {
   const [photos, setPhotos] = useState([]);
 
   useEffect(() => {
@@ -22,47 +28,43 @@ export default function PhotoGrid({ userId, max = 12 }) {
 
   if (!userId) return null;
 
-  return (
-    <div
-      style={{
-        border: "1px solid #ccc",
-        borderRadius: 4,
-        backgroundColor: "#f4f4f4",
-        padding: 10,
-        marginTop: 12,
-      }}
-    >
-      <h4 style={{ marginTop: 0 }}>Photos</h4>
+  if (photos.length === 0) {
+    return <div className="muted">No photos yet.</div>;
+  }
 
-      {photos.length === 0 ? (
-        <div style={{ color: "#666", fontSize: 13 }}>No photos yet.</div>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 8,
-          }}
-        >
-          {photos.map((p) => (
-            <a
-              key={p.id}
-              href={p.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={p.type || "photo"}
-              style={{ display: "block", borderRadius: 6, overflow: "hidden" }}
-            >
-              <img
-                src={p.url}
-                alt={p.type || "photo"}
-                loading="lazy"
-                style={{ width: "100%", height: 60, objectFit: "cover", display: "block" }}
-              />
-            </a>
-          ))}
-        </div>
-      )}
+  return (
+    <div className="photos-grid">
+      {photos.map((p) => {
+        const Tile = (
+          <img
+            src={p.url}
+            alt={p.type || "photo"}
+            loading="lazy"
+            style={{ width: "100%", height: 160, objectFit: "cover" }}
+          />
+        );
+        return onOpen ? (
+          <button
+            key={p.id}
+            className="photos-grid-btn"
+            onClick={() => onOpen(p)}
+            title={p.type || "photo"}
+          >
+            {Tile}
+          </button>
+        ) : (
+          <a
+            key={p.id}
+            href={p.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="photos-grid-btn"
+            title={p.type || "photo"}
+          >
+            {Tile}
+          </a>
+        );
+      })}
     </div>
   );
 }
