@@ -203,10 +203,6 @@ function Signup() {
             >
               {loading ? "Creating…" : "Sign Up"}
             </button>
-
-            <p className="forgot-password">
-              Already registered? <a href="/Login">Log In</a>
-            </p>
           </form>
         </div>
       </div>

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { db } from "./firebase";
+import { signOut } from "firebase/auth";
+import { auth } from "./firebase";
+
 import {
   collection,
   doc,
@@ -26,8 +29,16 @@ export default function Navbar({
   handleSearch,
   searchResults = [],
 }) {
+  // ✅ fallback state if props not provided
+  const [localSearchTerm, setLocalSearchTerm] = useState("");
+  const effectiveSearchTerm =
+    searchTerm !== undefined ? searchTerm : localSearchTerm;
+  const effectiveSetSearchTerm =
+    typeof setSearchTerm === "function" ? setSearchTerm : setLocalSearchTerm;
+
   const navigate = useNavigate();
   const [me, setMe] = useState(null);
+const [showMenu, setShowMenu] = useState(false);
 
   // counts + lists
   const [pendingReqs, setPendingReqs] = useState([]);   // FriendRequests docs (to me, pending)
@@ -85,10 +96,9 @@ export default function Navbar({
     return unsub;
   }, [currentUserId]);
 
-  // subscribe: unread messages count (⚠️ adjust if your schema differs)
+  // subscribe: unread messages count
   useEffect(() => {
     if (!currentUserId) return;
-    // If your unread flag/collection differs, update this query.
     let unsub;
     try {
       const qy = query(
@@ -98,7 +108,7 @@ export default function Navbar({
       );
       unsub = onSnapshot(qy, (snap) => setUnreadMsgCount(snap.size || 0));
     } catch {
-      // collection may not exist yet—just ignore
+      // ignore
     }
     return () => unsub && unsub();
   }, [currentUserId]);
@@ -125,8 +135,15 @@ export default function Navbar({
     setOpenFriends(false);
     setOpenNotifs(false);
   };
+const doLogout = async () => {
+  try {
+    await signOut(auth);
+    navigate("/login");
+  } catch (e) {
+    console.error("Logout failed", e);
+  }
+};
 
-  // friend actions (lightweight): Accept → status: accepted | Decline → status: declined
   const acceptFriend = async (reqId) => {
     try { await updateDoc(doc(db, "FriendRequests", reqId), { status: "accepted" }); }
     catch (e) { console.error("acceptFriend error", e); }
@@ -136,11 +153,9 @@ export default function Navbar({
     catch (e) { console.error("declineFriend error", e); }
   };
 
-  // mark notification as read and maybe navigate to context
   const openNotification = async (n) => {
     try { await updateDoc(doc(db, "Notifications", n.id), { read: true }); } catch {}
     if (n.postId) {
-      // If you have a post route, point there; otherwise go to the actor profile.
       navigate(`/post/${n.postId}`);
     } else if (n.actorId) {
       navigate(`/profile/${n.actorId}`);
@@ -154,7 +169,7 @@ export default function Navbar({
   };
 
   return (
-    <header className="nav-wrap" onMouseLeave={() => {/* keep open unless explicitly toggled */}}>
+    <header className="nav-wrap" onMouseLeave={() => {}}>
       {/* Brand */}
       <div className="brand" onClick={() => { closeAllPopovers(); navigate("/"); }}>
         <span className="brand-mark">LivespaceZone</span>
@@ -171,8 +186,8 @@ export default function Navbar({
           </svg>
           <input
             ref={inputRef}
-            value={searchTerm}
-            onChange={(e) => { setSearchTerm(e.target.value); if (!openSearch) setOpenSearch(true); }}
+            value={effectiveSearchTerm}
+            onChange={(e) => { effectiveSetSearchTerm(e.target.value); if (!openSearch) setOpenSearch(true); }}
             onKeyDown={onSearchKey}
             onFocus={() => setOpenSearch(true)}
             placeholder="Search by name or email..."
@@ -186,7 +201,7 @@ export default function Navbar({
           </button>
         </div>
 
-        {openSearch && searchTerm && (
+        {openSearch && effectiveSearchTerm && (
           <div className="results" onMouseDown={(e) => e.preventDefault()}>
             {searchResults.length === 0 ? (
               <div className="result empty">No results</div>
@@ -209,6 +224,8 @@ export default function Navbar({
           </div>
         )}
       </div>
+
+
 
       {/* Right side */}
       <div className="right">
@@ -310,12 +327,40 @@ export default function Navbar({
         </div>
 
         {/* Me */}
-        <div className="me" onClick={() => { closeAllPopovers(); navigate(`/profile/${currentUserId}`); }}>
-          <div className="me-img">
-            <img src={me?.photo || "https://i.imgur.com/qzsiOuh.png"} alt="" />
-          </div>
-          <span className="me-name">{displayName || "Profile"}</span>
-        </div>
+        <div
+  className="me-dropdown"
+  onMouseLeave={() => setShowMenu(false)}
+>
+  <div
+    className="me"
+    onMouseEnter={() => setShowMenu(true)}
+     onClick={() => { navigate(`/profile/${currentUserId}`); }}
+  >
+    <div className="me-img">
+      <img src={me?.photo || "https://i.imgur.com/qzsiOuh.png"} alt="" />
+    </div>
+    <span className="me-name">{displayName || "Profile"}</span>
+  </div>
+
+  {showMenu && (
+    <div className="me-menu">
+      
+      <button className="icon-btn logout-btn" onClick={doLogout}>
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      d="M16 13v-2H7V8l-5 4 5 4v-3h9zm3-10H5c-1.1 0-2 .9-2 
+         2v6h2V5h14v14H5v-6H3v6c0 1.1.9 2 2 
+         2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
+      fill="currentColor"
+    />
+  </svg>
+  Logout
+</button>
+
+    </div>
+  )}
+</div>
+
       </div>
     </header>
   );
