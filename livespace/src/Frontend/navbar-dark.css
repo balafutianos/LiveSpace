@@ -117,3 +117,50 @@
 .me-img{ width:28px; height:28px; border-radius:999px; overflow:hidden; border:1px solid var(--nav-stroke); background:#0b2028; }
 .me-img img{ width:100%; height:100%; object-fit:cover; display:block }
 .me-name{ color:#d8e9f4; font-size: 14px; max-width: 160px; white-space: nowrap; text-overflow: ellipsis; overflow:hidden }
+/* Reuse existing icon button style */
+.logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #d11515;
+  font-size: 14px;
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+
+.logout-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* Gradient hover effect */
+.logout-btn:hover {
+  background: linear-gradient(90deg, #ff4d4d, #ff1a1a);
+  color: #fff;
+  transform: translateX(2px);
+}
+
+.me-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.me-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 140px;
+  z-index: 1000;
+
+  /* Prevent flicker/overlap jump */
+  transform: translateY(4px);
+}
