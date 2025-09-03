@@ -19,7 +19,7 @@ import FriendButton from "./FriendButton";
 import Comments from "./Comments";
 import FriendList from "./FriendList";
 
-import "./profile.css";
+import "./Profile.css";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER =
