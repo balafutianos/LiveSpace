@@ -5,10 +5,12 @@ import { setDoc, doc } from "firebase/firestore";
 import { toast } from "react-toastify";
 import "./Signup.css";
 import Nav from "./Nav";
-
+import { Eye, EyeOff } from "lucide-react"
 function Signup() {
   const [email, setEmail] = useState("");
+  const [confirmEmail, setConfirmEmail] = useState("");       // NEW
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);     // NEW
   const [fname, setFname] = useState("");
   const [lname, setLname] = useState("");
 
@@ -17,6 +19,7 @@ function Signup() {
     fname: "",
     lname: "",
     email: "",
+    confirmEmail: "",  // NEW
     password: "",
     general: "",
   });
@@ -49,13 +52,18 @@ function Signup() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    setErrors({ fname: "", lname: "", email: "", password: "", general: "" });
+    setErrors({ fname: "", lname: "", email: "", confirmEmail: "", password: "", general: "" });
 
     // Client-side validation
     const next = {};
     if (!fname.trim()) next.fname = "First name is required.";
-    // last name optional — add if you want: if (!lname.trim()) next.lname = "Last name is required.";
     if (!email.trim()) next.email = "Email is required.";
+
+    // Email confirmation check (case-insensitive compare)
+    if (email.trim().toLowerCase() !== confirmEmail.trim().toLowerCase()) {
+      next.confirmEmail = "Email addresses do not match.";
+    }
+
     const pwIssue = passwordIssue(password);
     if (pwIssue) next.password = pwIssue;
 
@@ -68,7 +76,7 @@ function Signup() {
       setLoading(true);
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
 
-      const user = cred.user; // more reliable than auth.currentUser immediately
+      const user = cred.user;
       await setDoc(doc(db, "Users", user.uid), {
         email: user.email?.toLowerCase() || email.trim().toLowerCase(),
         firstName: fname.trim(),
@@ -127,6 +135,7 @@ function Signup() {
                   placeholder="First name"
                   onChange={(e) => setFname(e.target.value)}
                   required
+                  autoComplete="given-name"
                   className={errors.fname ? "is-error" : ""}
                   aria-invalid={!!errors.fname}
                   aria-describedby={errors.fname ? "fname-error" : undefined}
@@ -143,6 +152,7 @@ function Signup() {
                   type="text"
                   placeholder="Last name"
                   onChange={(e) => setLname(e.target.value)}
+                  autoComplete="family-name"
                   className={errors.lname ? "is-error" : ""}
                   aria-invalid={!!errors.lname}
                   aria-describedby={errors.lname ? "lname-error" : undefined}
@@ -160,6 +170,8 @@ function Signup() {
                   placeholder="Email address"
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  inputMode="email"
+                  autoComplete="email"
                   className={errors.email ? "is-error" : ""}
                   aria-invalid={!!errors.email}
                   aria-describedby={errors.email ? "email-error" : undefined}
@@ -171,28 +183,62 @@ function Signup() {
                 )}
               </div>
 
+              {/* Confirm Email */}
               <div className="input-wrap">
                 <input
-                  type="password"
-                  placeholder="New password"
-                  onChange={(e) => setPassword(e.target.value)}
+                  type="email"
+                  placeholder="Confirm email address"
+                  onChange={(e) => setConfirmEmail(e.target.value)}
                   required
-                  minLength={8}
-                  pattern="(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).+"
-                  title="At least 8 characters, 1 uppercase, 1 number, and 1 special character."
-                  className={errors.password ? "is-error" : ""}
-                  aria-invalid={!!errors.password}
-                  aria-describedby="pw-hint pw-error"
+                  inputMode="email"
+                  autoComplete="email"
+                  className={errors.confirmEmail ? "is-error" : ""}
+                  aria-invalid={!!errors.confirmEmail}
+                  aria-describedby={errors.confirmEmail ? "confirm-email-error" : undefined}
                 />
-                <small id="pw-hint" className="help-text">
-                  Must be 8+ chars and include 1 uppercase, 1 number, 1 special character.
-                </small>
-                {errors.password && (
-                  <small id="pw-error" className="field-error">
-                    {errors.password}
+                {errors.confirmEmail && (
+                  <small id="confirm-email-error" className="field-error" role="alert" aria-live="polite">
+                    {errors.confirmEmail}
                   </small>
                 )}
               </div>
+
+              {/* Password with show/hide toggle */}
+           <div className="input-wrap password-wrap">
+  <div className="control"> {/* NEW inner wrapper */}
+    <input
+      type={showPassword ? "text" : "password"}
+      placeholder="New password"
+      onChange={(e) => setPassword(e.target.value)}
+      required
+      minLength={8}
+      pattern="(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).+"
+      title="At least 8 characters, 1 uppercase, 1 number, and 1 special character."
+      autoComplete="new-password"
+      className={`password-input ${errors.password ? "is-error" : ""}`}
+      aria-invalid={!!errors.password}
+      aria-describedby="pw-hint pw-error"
+    />
+    <button
+      type="button"
+      className="toggle-visibility"
+      onClick={() => setShowPassword((s) => !s)}
+      aria-label={showPassword ? "Hide password" : "Show password"}
+    >
+      {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+    </button>
+  </div>
+
+  <small id="pw-hint" className="help-text">
+    Must be 8+ chars and include 1 uppercase, 1 number, 1 special character.
+  </small>
+  {errors.password && (
+    <small id="pw-error" className="field-error">
+      {errors.password}
+    </small>
+  )}
+</div>
+
             </div>
 
             <button
