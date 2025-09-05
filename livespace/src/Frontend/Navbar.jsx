@@ -426,28 +426,26 @@ setUnreadMsgCount(count);
 
       {/* Right side */}
       <div className="right">
-        {/* Messages button (navigates) */}
         <button
-          className="icon-btn"
-          title="Messages"
-          onClick={() => {
-            closeAllPopovers();
-            navigate("/messages");
-          }}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
-              fill="currentColor"
-            />
-          </svg>
+  className="icon-btn"
+  title="Messages"
+  onClick={() => {
+    closeAllPopovers();
+    navigate("/messages");
+  }}
+>
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
+      fill="currentColor"
+    />
+  </svg>
 
-          {/* green dot for unread messages */}
-          {unreadMsgCount > 0 && <span className="badge-dot" aria-label="new messages" />}
+  {/* 👇 Replace this block */}
+  {unreadMsgCount > 0 && <span className="badge-dot" aria-label="new messages" />}
+  {/* remove the numeric badge if you don’t want numbers */}
+</button>
 
-          {/* keep numeric badge if you want both; remove if dot-only */}
-          {unreadMsgCount > 0 && <span className="badge">{unreadMsgCount}</span>}
-        </button>
 
         {/* Friends (pending requests dropdown) */}
         <div className="icon-pop">
