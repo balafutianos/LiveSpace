@@ -1,12 +1,11 @@
 // FriendInbox.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { db } from "./firebase";
 import {
   collection,
   onSnapshot,
   query,
   where,
-  orderBy,
   doc,
   updateDoc,
   serverTimestamp,
@@ -19,61 +18,192 @@ const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const FIREBASE_DEFAULT_IMAGE =
   "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
 
-function nameFromUser(u = {}) {
-  const name = `${u.firstName || ""} ${u.lastName || ""}`.trim();
-  if (name) return name;
-  if (u.email) return u.email.split("@")[0];
+// Build a friendly full name from either the request doc or the Users doc
+function resolveSenderName(r, u = {}) {
+  // 1) Prefer explicit fields from the request doc if present
+  const rFirst =
+    r.fromFirstName ??
+    r.firstName ??
+    r.firstname ??
+    r.from_first_name ??
+    r.from_first ??
+    "";
+  const rLast =
+    r.fromLastName ??
+    r.lastName ??
+    r.lastname ??
+    r.from_last_name ??
+    r.from_last ??
+    "";
+  const rFull =
+    (r.fromName ?? r.fullName ?? r.name ?? `${rFirst} ${rLast}`.trim()).trim();
+
+  // If request already carries a proper name, use it
+  if (rFull && rFull.toLowerCase() !== "someone") return rFull;
+
+  // 2) Try common fields on the Users doc
+  // first/last variants
+  const uFirst =
+    u.firstName ??
+    u.firstname ??
+    u.first_name ??
+    u.givenName ??
+    u.given_name ??
+    "";
+  const uLast =
+    u.lastName ??
+    u.lastname ??
+    u.last_name ??
+    u.familyName ??
+    u.family_name ??
+    "";
+  const direct = `${uFirst || ""} ${uLast || ""}`.trim();
+  if (direct) return direct;
+
+  // displayName / name
+  const disp =
+    u.displayName ??
+    u.display_name ??
+    u.name ??
+    u.fullName ??
+    u.full_name ??
+    "";
+  if (disp) return String(disp).trim();
+
+  // 3) Fall back to email prefix if available
+  if (u.email) return String(u.email).split("@")[0];
+  if (r.fromEmail) return String(r.fromEmail).split("@")[0];
+
+  // 4) Final fallback
   return "Someone";
 }
 
+function resolveSenderPhoto(r, u = {}) {
+  // Prefer a photo carried on the request doc if present
+  const rp = r.fromPhoto ?? r.photo ?? r.avatar ?? "";
+  if (rp && rp !== FIREBASE_DEFAULT_IMAGE) return rp;
+
+  // Otherwise, use the Users doc photo if present
+  const up = u.photo ?? u.avatar ?? u.picture ?? "";
+  if (up && up !== FIREBASE_DEFAULT_IMAGE) return up;
+
+  // Fallback
+  return FALLBACK_IMAGE;
+}
+
 export default function FriendInbox({ currentUserId }) {
-  const [incoming, setIncoming] = useState([]); // [{id, fromId, toId, ... , _from:{name,photo}}]
+  const [incoming, setIncoming] = useState([]); // [{id, fromId, toId, ... , _from:{fullName,photo}}]
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!currentUserId) return;
 
-    const qy = query(
-      collection(db, "FriendRequests"),
-      where("toId", "==", currentUserId),
-      where("status", "==", "pending"),
-      orderBy("createdAt", "desc")
-    );
+    let snapTo = null;
+    let snapReceiver = null;
 
-    const unsub = onSnapshot(
-      qy,
-      async (snap) => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // hydrate with sender mini profile
-        const hydrated = await Promise.all(
-          rows.map(async (r) => {
-            try {
+    const toMillis = (t) =>
+      typeof t?.toMillis === "function"
+        ? t.toMillis()
+        : t?.seconds
+        ? t.seconds * 1000
+        : typeof t === "number"
+        ? t
+        : 0;
+
+    const mergeAndSet = async () => {
+      const snaps = [snapTo, snapReceiver].filter(Boolean);
+      const map = new Map();
+
+      // Merge all docs from both listeners (avoid duplicates)
+      snaps.forEach((s) => {
+        s.docs.forEach((d) => map.set(d.id, { id: d.id, ...d.data() }));
+      });
+
+      // Keep only pending (case-insensitive). If status missing, treat as pending.
+      const raw = [...map.values()].filter((r) => {
+        const s = (r.status ?? "pending") + "";
+        return s.toLowerCase() === "pending";
+      });
+
+      // Sort newest first locally
+      raw.sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+
+      // Hydrate sender mini profile – prefer fields on the request; else read Users doc
+      const hydrated = await Promise.all(
+        raw.map(async (r) => {
+          let u = {};
+          try {
+            if (r.fromId) {
               const s = await getDoc(doc(db, "Users", r.fromId));
-              const u = s.exists() ? s.data() : {};
-              const photo =
-                !u.photo || u.photo === "" || u.photo === FIREBASE_DEFAULT_IMAGE
-                  ? FALLBACK_IMAGE
-                  : u.photo;
-              return { ...r, _from: { name: nameFromUser(u), photo } };
-            } catch {
-              return { ...r, _from: { name: "Someone", photo: FALLBACK_IMAGE } };
+              if (s.exists()) u = s.data();
             }
-          })
-        );
-        setIncoming(hydrated);
-        setLoading(false);
+          } catch {
+            /* ignore user fetch errors; we'll still render from request fields */
+          }
+
+          const fullName = resolveSenderName(r, u);
+          const photo = resolveSenderPhoto(r, u);
+
+          return { ...r, _from: { fullName, photo } };
+        })
+      );
+
+      setIncoming(hydrated);
+      setLoading(false);
+    };
+
+    // Listen to requests targeting me via toId
+    const unsubTo = onSnapshot(
+      query(collection(db, "FriendRequests"), where("toId", "==", currentUserId)),
+      (snap) => {
+        snapTo = snap;
+        mergeAndSet();
       },
       (err) => {
-        console.error("FriendInbox listener error:", err);
-        setIncoming([]);
+        console.error("[FriendInbox] toId listener error:", err);
         setLoading(false);
       }
     );
 
-    return () => unsub();
+    // Also listen in case older code used receiverId
+    const unsubReceiver = onSnapshot(
+      query(collection(db, "FriendRequests"), where("receiverId", "==", currentUserId)),
+      (snap) => {
+        snapReceiver = snap;
+        mergeAndSet();
+      },
+      (err) => console.error("[FriendInbox] receiverId listener error:", err)
+    );
+
+    return () => {
+      unsubTo();
+      unsubReceiver();
+    };
   }, [currentUserId]);
 
   async function accept(req) {
+    // 3) notify sender that I accepted
+try {
+  const meSnap = await getDoc(doc(db, "Users", currentUserId));
+  const me = meSnap.exists() ? meSnap.data() : {};
+  const actorName = `${me.firstName || ""} ${me.lastName || ""}`.trim() || (me.email || "");
+  await addDoc(collection(db, "Notifications"), {
+    recipientId: req.fromId,          // the sender gets the notification
+    actorId: currentUserId,           // me (the acceptor)
+    actorFirstName: me.firstName || "",
+    actorLastName: me.lastName || "",
+    actorName,                        // 👈 add this so navbar can show a name immediately
+    actorPhoto: !me.photo || me.photo === "" ? FALLBACK_IMAGE : me.photo,
+    type: "friend_accept",            // 👈 this is allowed by your rules
+    postId: "",
+    text: "",                         // optional; we’ll render by type
+    createdAt: serverTimestamp(),
+    read: false,
+  });
+} catch (e) {
+  console.warn("friend_accept notification failed (ok to ignore):", e);
+}
+
     try {
       // 1) mark accepted
       await updateDoc(doc(db, "FriendRequests", req.id), {
@@ -98,8 +228,7 @@ export default function FriendInbox({ currentUserId }) {
           actorId: currentUserId,
           actorFirstName: me.firstName || "",
           actorLastName: me.lastName || "",
-          actorPhoto:
-            !me.photo || me.photo === "" ? FALLBACK_IMAGE : me.photo,
+          actorPhoto: !me.photo || me.photo === "" ? FALLBACK_IMAGE : me.photo,
           type: "friend_accept",
           postId: "",
           text: "",
@@ -157,7 +286,7 @@ export default function FriendInbox({ currentUserId }) {
           >
             <img
               src={req._from?.photo || FALLBACK_IMAGE}
-              alt={req._from?.name || "User"}
+              alt={req._from?.fullName || "User"}
               style={{
                 width: 40,
                 height: 40,
@@ -175,7 +304,7 @@ export default function FriendInbox({ currentUserId }) {
                   textOverflow: "ellipsis",
                 }}
               >
-                {req._from?.name || "Someone"}
+                {req._from?.fullName || "Someone"}
               </div>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
                 sent you a friend request

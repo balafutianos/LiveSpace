@@ -14,6 +14,8 @@ import {
   query,
   updateDoc,
   where,
+  addDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import "./navbar-dark.css";
 
@@ -29,7 +31,7 @@ export default function Navbar({
   handleSearch,
   searchResults = [],
 }) {
-  // ✅ fallback state if props not provided
+  // Fallback search state if parent doesn’t provide
   const [localSearchTerm, setLocalSearchTerm] = useState("");
   const effectiveSearchTerm =
     searchTerm !== undefined ? searchTerm : localSearchTerm;
@@ -38,12 +40,44 @@ export default function Navbar({
 
   const navigate = useNavigate();
   const [me, setMe] = useState(null);
-const [showMenu, setShowMenu] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+
+  // sound + “new unread” detection
+  const audioRef = useRef(null);
+  const lastUnreadRef = useRef(0);
+  const [canPlaySound, setCanPlaySound] = useState(false); // becomes true after any user interaction
 
   // counts + lists
-  const [pendingReqs, setPendingReqs] = useState([]);   // FriendRequests docs (to me, pending)
-  const [notifs, setNotifs] = useState([]);             // latest notifications to me
+  const [pendingReqs, setPendingReqs] = useState([]); // FriendRequests docs (to me, pending)
+  const [notifs, setNotifs] = useState([]);           // latest notifications to me
   const [unreadMsgCount, setUnreadMsgCount] = useState(0);
+  const [acceptingId, setAcceptingId] = useState(null);
+
+  // mini user cache for request senders
+  const [miniUsers, setMiniUsers] = useState({}); // { uid: { name, photo } }
+  const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
+  const FIREBASE_DEFAULT_IMAGE =
+    "https://firebasestorage.googleapis.com/v0/b/livespacezone.appspot.com/o/profilePictures%2Fdefaultavatar.jpg?alt=media";
+
+  const buildName = (u = {}) => {
+    const fn =
+      u.firstName ?? u.firstname ?? u.first_name ?? u.givenName ?? u.given_name ?? "";
+    const ln =
+      u.lastName ?? u.lastname ?? u.last_name ?? u.familyName ?? u.family_name ?? "";
+    const byFirstLast = `${fn} ${ln}`.trim();
+    if (byFirstLast) return byFirstLast;
+    const disp =
+      u.displayName ?? u.display_name ?? u.name ?? u.fullName ?? u.full_name ?? "";
+    if (disp) return String(disp).trim();
+    if (u.email) return String(u.email).split("@")[0];
+    return "Someone";
+  };
+
+  const pickPhoto = (u = {}) => {
+    const p = u.photo ?? u.avatar ?? u.picture ?? "";
+    if (p && p !== FIREBASE_DEFAULT_IMAGE) return p;
+    return FALLBACK_IMAGE;
+  };
 
   // UI state
   const [openSearch, setOpenSearch] = useState(false);
@@ -61,27 +95,87 @@ const [showMenu, setShowMenu] = useState(false);
         const snap = await getDoc(doc(db, "Users", currentUserId));
         if (!alive) return;
         setMe(snap.exists() ? snap.data() : null);
-      } catch { setMe(null); }
+      } catch {
+        setMe(null);
+      }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [currentUserId]);
 
-  // subscribe: pending friend requests
+  // subscribe: pending friend requests (no index required; sort in memory)
   useEffect(() => {
     if (!currentUserId) return;
+
     const qy = query(
       collection(db, "FriendRequests"),
       where("toId", "==", currentUserId),
-      where("status", "==", "pending"),
-      orderBy("createdAt", "desc")
+      where("status", "==", "pending")
+      // NOTE: intentionally no orderBy here to avoid composite index requirement
     );
-    const unsub = onSnapshot(qy, (snap) => {
-      setPendingReqs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+
+    const toMs = (t) =>
+      typeof t?.toMillis === "function"
+        ? t.toMillis()
+        : t?.seconds
+        ? t.seconds * 1000
+        : typeof t === "number"
+        ? t
+        : 0;
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        // newest first
+        list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+        setPendingReqs(list);
+      },
+      (err) => console.error("FriendRequests listener error:", err)
+    );
+
     return unsub;
   }, [currentUserId]);
 
-  // subscribe: latest notifications (and unread count via filter)
+  // hydrate mini profiles for senders of pending requests
+  useEffect(() => {
+    if (!currentUserId || pendingReqs.length === 0) return;
+    const missing = Array.from(
+      new Set(
+        pendingReqs
+          .map((r) => r.fromId)
+          .filter(Boolean)
+          .filter((uid) => !miniUsers[uid])
+      )
+    );
+    if (missing.length === 0) return;
+
+    (async () => {
+      try {
+        const updates = {};
+        for (const uid of missing) {
+          try {
+            const s = await getDoc(doc(db, "Users", uid));
+            if (s.exists()) {
+              const u = s.data();
+              updates[uid] = { name: buildName(u), photo: pickPhoto(u) };
+            } else {
+              updates[uid] = { name: "Someone", photo: FALLBACK_IMAGE };
+            }
+          } catch {
+            updates[uid] = { name: "Someone", photo: FALLBACK_IMAGE };
+          }
+        }
+        setMiniUsers((prev) => ({ ...prev, ...updates }));
+      } catch (e) {
+        console.error("mini user hydrate error", e);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId, pendingReqs]);
+
+  // subscribe: latest notifications (keep orderBy; you likely have this index already)
   useEffect(() => {
     if (!currentUserId) return;
     const qy = query(
@@ -96,29 +190,65 @@ const [showMenu, setShowMenu] = useState(false);
     return unsub;
   }, [currentUserId]);
 
-  // subscribe: unread messages count
+  // subscribe: unread messages count (rules-compliant, 1 array-contains only)
+useEffect(() => {
+  if (!currentUserId) return;
+  let unsub;
+  try {
+    const qy = query(
+      collection(db, "Messages"),
+      where("userIds", "array-contains", currentUserId)
+    );
+    unsub = onSnapshot(
+      qy,
+      (snap) => {
+        // Filter client-side because we can't use two array-contains in one query
+        const count = snap.docs.reduce((acc, d) => {
+  const data = d.data() || {};
+  // support both models: array-of-uids OR map-of-counts
+  if (Array.isArray(data.unread)) {
+    return acc + (data.unread.includes(currentUserId) ? 1 : 0);
+  }
+  if (data.unread && typeof data.unread === "object") {
+    return acc + ((data.unread[currentUserId] || 0) > 0 ? 1 : 0);
+  }
+  return acc;
+}, 0);
+setUnreadMsgCount(count);
+
+      },
+      (err) => {
+        console.error("Unread messages listener (permission?)", err);
+        setUnreadMsgCount(0);
+      }
+    );
+  } catch (e) {
+    console.error("Unread messages listener error:", e);
+    setUnreadMsgCount(0);
+  }
+  return () => unsub && unsub();
+}, [currentUserId]);
+
+
+  // play sound on unread increase
   useEffect(() => {
-    if (!currentUserId) return;
-    let unsub;
-    try {
-      const qy = query(
-        collection(db, "Messages"),
-        where("toId", "==", currentUserId),
-        where("read", "==", false)
-      );
-      unsub = onSnapshot(qy, (snap) => setUnreadMsgCount(snap.size || 0));
-    } catch {
-      // ignore
+    const prev = lastUnreadRef.current;
+    if (canPlaySound && unreadMsgCount > prev) {
+      try {
+        audioRef.current?.play?.();
+      } catch {
+        // ignore autoplay errors
+      }
     }
-    return () => unsub && unsub();
-  }, [currentUserId]);
+    lastUnreadRef.current = unreadMsgCount;
+  }, [unreadMsgCount, canPlaySound]);
 
   const displayName = useMemo(() => {
     if (!me) return "";
     const fn = me.firstName || "";
     const ln = me.lastName || "";
     const name = `${fn} ${ln}`.trim();
-    return name || (me.email || "");
+    return name || me.email || "";
   }, [me]);
 
   const onSearchKey = (e) => {
@@ -135,26 +265,72 @@ const [showMenu, setShowMenu] = useState(false);
     setOpenFriends(false);
     setOpenNotifs(false);
   };
-const doLogout = async () => {
-  try {
-    await signOut(auth);
-    navigate("/login");
-  } catch (e) {
-    console.error("Logout failed", e);
-  }
-};
 
-  const acceptFriend = async (reqId) => {
-    try { await updateDoc(doc(db, "FriendRequests", reqId), { status: "accepted" }); }
-    catch (e) { console.error("acceptFriend error", e); }
+  const doLogout = async () => {
+    try {
+      await signOut(auth);
+      navigate("/");
+    } catch (e) {
+      console.error("Logout failed", e);
+    }
   };
+
+  // Accept with optimistic removal + friend_accept notification
+  const acceptFriend = async (reqObj) => {
+    try {
+      setAcceptingId(reqObj.id);
+
+      // 1) Mark accepted in Firestore
+      await updateDoc(doc(db, "FriendRequests", reqObj.id), { status: "accepted" });
+
+      // 2) Optimistically remove from local pending list (so it vanishes immediately)
+      setPendingReqs((prev) => prev.filter((r) => r.id !== reqObj.id));
+
+      // 3) Create "friend_accept" notification for the sender
+      try {
+        const meSnap = await getDoc(doc(db, "Users", currentUserId));
+        const meData = meSnap.exists() ? meSnap.data() : {};
+        const actorName =
+          `${meData.firstName || ""} ${meData.lastName || ""}`.trim() ||
+          meData.email ||
+          "Someone";
+
+        await addDoc(collection(db, "Notifications"), {
+          recipientId: reqObj.fromId,       // sender gets notified
+          actorId: currentUserId,           // me (acceptor)
+          actorFirstName: meData.firstName || "",
+          actorLastName: meData.lastName || "",
+          actorName,
+          actorPhoto:
+            !meData?.photo || meData.photo === "" ? FALLBACK_IMAGE : meData.photo,
+          type: "friend_accept",
+          postId: "",
+          text: "",
+          createdAt: serverTimestamp(),
+          read: false,
+        });
+      } catch (e) {
+        console.warn("friend_accept notification failed (ok to ignore):", e);
+      }
+    } catch (e) {
+      console.error("acceptFriend error", e);
+    } finally {
+      setAcceptingId(null);
+    }
+  };
+
   const declineFriend = async (reqId) => {
-    try { await updateDoc(doc(db, "FriendRequests", reqId), { status: "declined" }); }
-    catch (e) { console.error("declineFriend error", e); }
+    try {
+      await updateDoc(doc(db, "FriendRequests", reqId), { status: "declined" });
+    } catch (e) {
+      console.error("declineFriend error", e);
+    }
   };
 
   const openNotification = async (n) => {
-    try { await updateDoc(doc(db, "Notifications", n.id), { read: true }); } catch {}
+    try {
+      await updateDoc(doc(db, "Notifications", n.id), { read: true });
+    } catch {}
     if (n.postId) {
       navigate(`/post/${n.postId}`);
     } else if (n.actorId) {
@@ -169,9 +345,20 @@ const doLogout = async () => {
   };
 
   return (
-    <header className="nav-wrap" onMouseLeave={() => {}}>
+    <header
+      className="nav-wrap"
+      onMouseLeave={() => {}}
+      onClick={() => setCanPlaySound(true)}
+      onKeyDown={() => setCanPlaySound(true)}
+    >
       {/* Brand */}
-      <div className="brand" onClick={() => { closeAllPopovers(); navigate("/"); }}>
+      <div
+        className="brand"
+        onClick={() => {
+          closeAllPopovers();
+          navigate("/");
+        }}
+      >
         <span className="brand-mark">LivespaceZone</span>
       </div>
 
@@ -187,7 +374,10 @@ const doLogout = async () => {
           <input
             ref={inputRef}
             value={effectiveSearchTerm}
-            onChange={(e) => { effectiveSetSearchTerm(e.target.value); if (!openSearch) setOpenSearch(true); }}
+            onChange={(e) => {
+              effectiveSetSearchTerm(e.target.value);
+              if (!openSearch) setOpenSearch(true);
+            }}
             onKeyDown={onSearchKey}
             onFocus={() => setOpenSearch(true)}
             placeholder="Search by name or email..."
@@ -195,7 +385,11 @@ const doLogout = async () => {
           <button
             className="btn-search"
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { handleSearch?.(); setOpenSearch(true); inputRef.current?.focus(); }}
+            onClick={() => {
+              handleSearch?.();
+              setOpenSearch(true);
+              inputRef.current?.focus();
+            }}
           >
             Search
           </button>
@@ -213,9 +407,14 @@ const doLogout = async () => {
                   onClick={() => gotoProfile(u.id)}
                   title={`${u.firstName || ""} ${u.lastName || ""}`}
                 >
-                  <img src={u.photo || "https://i.imgur.com/qzsiOuh.png"} alt="" />
+                  <img
+                    src={u.photo || "https://i.imgur.com/qzsiOuh.png"}
+                    alt=""
+                  />
                   <div className="r-meta">
-                    <div className="r-name">{(u.firstName || "") + " " + (u.lastName || "")}</div>
+                    <div className="r-name">
+                      {(u.firstName || "") + " " + (u.lastName || "")}
+                    </div>
                     <div className="r-sub">{u.email}</div>
                   </div>
                 </button>
@@ -225,36 +424,51 @@ const doLogout = async () => {
         )}
       </div>
 
-
-
       {/* Right side */}
       <div className="right">
-
         {/* Messages button (navigates) */}
         <button
           className="icon-btn"
           title="Messages"
-          onClick={() => { closeAllPopovers(); navigate("/messages"); }}
+          onClick={() => {
+            closeAllPopovers();
+            navigate("/messages");
+          }}
         >
-          {/* chat bubble */}
           <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z" fill="currentColor"/>
+            <path
+              d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
+              fill="currentColor"
+            />
           </svg>
+
+          {/* green dot for unread messages */}
+          {unreadMsgCount > 0 && <span className="badge-dot" aria-label="new messages" />}
+
+          {/* keep numeric badge if you want both; remove if dot-only */}
           {unreadMsgCount > 0 && <span className="badge">{unreadMsgCount}</span>}
         </button>
 
         {/* Friends (pending requests dropdown) */}
         <div className="icon-pop">
           <button
-            className={`icon-btn ${openFriends ? "is-open": ""}`}
+            className={`icon-btn ${openFriends ? "is-open" : ""}`}
             title="Friend requests"
-            onClick={() => { setOpenFriends((v) => !v); setOpenNotifs(false); setOpenSearch(false); }}
+            onClick={() => {
+              setOpenFriends((v) => !v);
+              setOpenNotifs(false);
+              setOpenSearch(false);
+            }}
           >
-            {/* users */}
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.96 1.97 3.45V19a1 1 0 0 1-1 1h6a1 1 0 0 0 1-1v-.5c0-2.33-4.67-3.5-7-3.5z" fill="currentColor"/>
+              <path
+                d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.96 1.97 3.45V19a1 1 0 0 1-1 1h6a1 1 0 0 0 1-1v-.5c0-2.33-4.67-3.5-7-3.5z"
+                fill="currentColor"
+              />
             </svg>
-            {pendingReqs.length > 0 && <span className="badge">{pendingReqs.length}</span>}
+            {pendingReqs.length > 0 && (
+              <span className="badge">{pendingReqs.length}</span>
+            )}
           </button>
 
           {openFriends && (
@@ -265,19 +479,45 @@ const doLogout = async () => {
               ) : (
                 pendingReqs.map((r) => (
                   <div key={r.id} className="row">
-                    <div className="row-main">
-                      <div className="row-title">{r.fromName || "Someone"}</div>
-                      <div className="row-sub">{r.fromEmail || ""}</div>
+                    <div className="row-main" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <img
+                        src={miniUsers[r.fromId]?.photo || "https://i.imgur.com/qzsiOuh.png"}
+                        alt={miniUsers[r.fromId]?.name || "User"}
+                        style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }}
+                      />
+                      <div>
+                        <div className="row-title">
+                          {miniUsers[r.fromId]?.name || "Someone"}
+                        </div>
+                        <div className="row-sub">{r.fromEmail || ""}</div>
+                      </div>
                     </div>
                     <div className="row-actions">
-                      <button className="mini-btn approve" onClick={() => acceptFriend(r.id)}>Accept</button>
-                      <button className="mini-btn" onClick={() => declineFriend(r.id)}>Decline</button>
+                      <button
+                        className="mini-btn approve"
+                        onClick={() => acceptFriend(r)}   // pass the whole request so we know fromId
+                        disabled={acceptingId === r.id}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        className="mini-btn"
+                        onClick={() => declineFriend(r.id)}
+                      >
+                        Decline
+                      </button>
                     </div>
                   </div>
                 ))
               )}
               <div className="popover-foot">
-                <button className="mini-link" onClick={() => { navigate(`/profile/${currentUserId}`); setOpenFriends(false); }}>
+                <button
+                  className="mini-link"
+                  onClick={() => {
+                    navigate(`/profile/${currentUserId}`);
+                    setOpenFriends(false);
+                  }}
+                >
                   Open inbox
                 </button>
               </div>
@@ -288,16 +528,24 @@ const doLogout = async () => {
         {/* Notifications dropdown */}
         <div className="icon-pop">
           <button
-            className={`icon-btn ${openNotifs ? "is-open": ""}`}
+            className={`icon-btn ${openNotifs ? "is-open" : ""}`}
             title="Notifications"
-            onClick={() => { setOpenNotifs((v) => !v); setOpenFriends(false); setOpenSearch(false); }}
+            onClick={() => {
+              setOpenNotifs((v) => !v);
+              setOpenFriends(false);
+              setOpenSearch(false);
+            }}
           >
-            {/* bell */}
             <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2z" fill="currentColor"/>
+              <path
+                d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2zm6-6v-5a6 6 0 1 0-12 0v5l-2 2v1h16v-1l-2-2z"
+                fill="currentColor"
+              />
             </svg>
-            {notifs.filter(n => !n.read).length > 0 && (
-              <span className="badge">{notifs.filter(n=>!n.read).length}</span>
+            {notifs.filter((n) => !n.read).length > 0 && (
+              <span className="badge">
+                {notifs.filter((n) => !n.read).length}
+              </span>
             )}
           </button>
 
@@ -308,11 +556,30 @@ const doLogout = async () => {
                 <div className="popover-empty">Nothing new.</div>
               ) : (
                 notifs.map((n) => (
-                  <button key={n.id} className={`row ${n.read ? "" : "unread"}`} onClick={() => openNotification(n)}>
+                  <button
+                    key={n.id}
+                    className={`row ${n.read ? "" : "unread"}`}
+                    onClick={() => openNotification(n)}
+                  >
                     <div className="row-main">
                       <div className="row-title">
-                        <strong>{n.actorName || "Someone"}</strong>{` `}
-                        {n.type === "post" ? "posted" : n.type === "like" ? "liked" : n.type === "comment" ? "commented" : "updated"}
+                        <strong>
+                          {(
+                            n.actorName ||
+                            `${n.actorFirstName || ""} ${n.actorLastName || ""}`.trim()
+                          ) || "Someone"}
+                        </strong>{" "}
+                        {n.type === "post"
+                          ? "posted"
+                          : n.type === "like"
+                          ? "liked"
+                          : n.type === "comment"
+                          ? "commented"
+                          : n.type === "friend_request"
+                          ? "sent you a friend request"
+                          : n.type === "friend_accept"
+                          ? "accepted your friend request"
+                          : "updated"}
                       </div>
                       {n.text && <div className="row-sub">{n.text}</div>}
                     </div>
@@ -320,7 +587,9 @@ const doLogout = async () => {
                 ))
               )}
               <div className="popover-foot">
-                <button className="mini-link" onClick={() => setOpenNotifs(false)}>Close</button>
+                <button className="mini-link" onClick={() => setOpenNotifs(false)}>
+                  Close
+                </button>
               </div>
             </div>
           )}
@@ -328,40 +597,45 @@ const doLogout = async () => {
 
         {/* Me */}
         <div
-  className="me-dropdown"
-  onMouseLeave={() => setShowMenu(false)}
->
-  <div
-    className="me"
-    onMouseEnter={() => setShowMenu(true)}
-     onClick={() => { navigate(`/profile/${currentUserId}`); }}
-  >
-    <div className="me-img">
-      <img src={me?.photo || "https://i.imgur.com/qzsiOuh.png"} alt="" />
-    </div>
-    <span className="me-name">{displayName || "Profile"}</span>
-  </div>
+          className="me-dropdown"
+          onMouseLeave={() => setShowMenu(false)}
+        >
+          <div
+            className="me"
+            onMouseEnter={() => setShowMenu(true)}
+            onClick={() => {
+              navigate(`/profile/${currentUserId}`);
+            }}
+          >
+            <div className="me-img">
+              <img
+                src={me?.photo || "https://i.imgur.com/qzsiOuh.png"}
+                alt=""
+              />
+            </div>
+            <span className="me-name">{displayName || "Profile"}</span>
+          </div>
 
-  {showMenu && (
-    <div className="me-menu">
-      
-      <button className="icon-btn logout-btn" onClick={doLogout}>
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path
-      d="M16 13v-2H7V8l-5 4 5 4v-3h9zm3-10H5c-1.1 0-2 .9-2 
-         2v6h2V5h14v14H5v-6H3v6c0 1.1.9 2 2 
-         2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
-      fill="currentColor"
-    />
-  </svg>
-  Logout
-</button>
-
-    </div>
-  )}
-</div>
-
+          {showMenu && (
+            <div className="me-menu">
+              <button className="icon-btn logout-btn" onClick={doLogout}>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M16 13v-2H7V8l-5 4 5 4v-3h9zm3-10H5c-1.1 0-2 .9-2 
+                       2v6h2V5h14v14H5v-6H3v6c0 1.1.9 2 2 
+                       2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
+                    fill="currentColor"
+                  />
+                </svg>
+                Logout
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Preload the sound once */}
+      <audio ref={audioRef} src="/sounds/message.mp3" preload="auto" />
     </header>
   );
 }
