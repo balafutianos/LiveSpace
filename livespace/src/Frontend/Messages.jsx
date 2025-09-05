@@ -73,16 +73,15 @@ export default function Messages() {
     const q = query(
       collection(db, "Messages"),
       where("userIds", "array-contains", me)
-      // You can add orderBy("lastAt","desc") if you've built the index
+      // add orderBy("lastAt","desc") if you build the index
     );
     const unsub = onSnapshot(
       q,
       async (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // sort newest first client-side if no index
         rows.sort((a, b) => {
-          const at = a.lastAt?.toMillis?.() || 0;
-          const bt = b.lastAt?.toMillis?.() || 0;
+          const at = a?.lastAt?.toMillis?.() ? a.lastAt.toMillis() : 0;
+          const bt = b?.lastAt?.toMillis?.() ? b.lastAt.toMillis() : 0;
           return bt - at;
         });
         setThreads(rows);
@@ -101,7 +100,10 @@ export default function Messages() {
               const us = await getDoc(doc(db, "Users", uid));
               if (us.exists()) {
                 const d = us.data();
-                const name = `${d.firstName || ""} ${d.lastName || ""}`.trim() || d.email || "User";
+                const name =
+                  `${d.firstName || ""} ${d.lastName || ""}`.trim() ||
+                  d.email ||
+                  "User";
                 const photo =
                   !d.photo || d.photo === "" || d.photo === FIREBASE_DEFAULT_IMAGE
                     ? FALLBACK_IMAGE
@@ -155,19 +157,25 @@ export default function Messages() {
       const us = await getDoc(doc(db, "Users", peerId));
       if (us.exists()) {
         const d = us.data();
-        const name = `${d.firstName || ""} ${d.lastName || ""}`.trim() || d.email || "User";
+        const name =
+          `${d.firstName || ""} ${d.lastName || ""}`.trim() ||
+          d.email ||
+          "User";
         const photo =
           !d.photo || d.photo === "" || d.photo === FIREBASE_DEFAULT_IMAGE
             ? FALLBACK_IMAGE
             : d.photo;
         setUserCache((p) => ({ ...p, [peerId]: { name, photo } }));
       } else {
-        setUserCache((p) => ({ ...p, [peerId]: { name: "User", photo: FALLBACK_IMAGE } }));
+        setUserCache((p) => ({
+          ...p,
+          [peerId]: { name: "User", photo: FALLBACK_IMAGE },
+        }));
       }
     })();
   }, [peerId, userCache]);
 
-  // when opening a thread, mark my unread count = 0
+  // when opening a thread, set my unread = 0 (map model)
   useEffect(() => {
     if (!me || !peerId) return;
     const tid = threadIdFor(me, peerId);
@@ -193,7 +201,7 @@ export default function Messages() {
           createdAt: serverTimestamp(),
           lastText: "",
           lastAt: serverTimestamp(),
-          unread: { [meUid]: 0, [otherUid]: 0 },
+          unread: { [meUid]: 0, [otherUid]: 0 }, // map-of-counts model
         },
         { merge: true }
       );
@@ -214,7 +222,7 @@ export default function Messages() {
         createdAt: serverTimestamp(),
       });
 
-      // update thread summary + increment recipient unread
+      // update thread summary + increment recipient unread (map model)
       await updateDoc(tRef, {
         lastText: body,
         lastAt: serverTimestamp(),
@@ -223,8 +231,10 @@ export default function Messages() {
 
       setText("");
       setShowEmoji(false);
-      // keep my unread at 0
+
+      // keep my unread at 0 (optional but nice)
       await updateDoc(tRef, { [`unread.${me}`]: 0 });
+
       // scroll down
       requestAnimationFrame(() => {
         const el = document.getElementById("msg-end");
@@ -276,7 +286,13 @@ export default function Messages() {
           myThreads.map((t) => {
             const other = (t.userIds || []).find((u) => u !== me);
             const meta = userCache[other] || {};
-            const unread = t.unread?.[me] || 0;
+            const unread = t?.unread?.[me] || 0;
+
+            const timeLabel =
+              typeof t?.lastAt?.toMillis === "function"
+                ? new Date(t.lastAt.toMillis()).toLocaleTimeString()
+                : "";
+
             return (
               <button
                 key={t.id}
@@ -303,9 +319,7 @@ export default function Messages() {
                     <strong style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {meta.name || "User"}
                     </strong>
-                    <small style={{ color: "#666" }}>
-                      {t.lastAt?.toDate ? new Date(t.lastAt.toDate()).toLocaleTimeString() : ""}
-                    </small>
+                    <small style={{ color: "#666" }}>{timeLabel}</small>
                   </div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <span
@@ -400,7 +414,9 @@ export default function Messages() {
                     {m.text}
                     <div style={{ textAlign: "right", marginTop: 4 }}>
                       <small style={{ opacity: 0.7 }}>
-                        {m.createdAt?.toDate ? new Date(m.createdAt.toDate()).toLocaleTimeString() : ""}
+                        {typeof m?.createdAt?.toMillis === "function"
+                          ? new Date(m.createdAt.toMillis()).toLocaleTimeString()
+                          : ""}
                       </small>
                     </div>
                   </div>
