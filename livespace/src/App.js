@@ -1,102 +1,75 @@
-// App.jsx
 import React, { useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { ToastContainer } from "react-toastify";
-import { collection, getDocs, limit, query } from "firebase/firestore";
-
-import { auth, db } from "./Frontend/firebase";   // adjust path if needed
-import Navbar from "./Frontend/Navbar";
-
+import "react-toastify/dist/ReactToastify.css";
+import { collection, getDocs, limit, query, where } from "firebase/firestore";
+import { auth } from "./Frontend/firebase";
 import Signup from "./Frontend/Signup";
 import Login from "./Frontend/Login";
+import VerifyEmail from "./Frontend/VerifyEmail";
 import Profile from "./Frontend/Profile";
-import Messages from "./Frontend/Messages";
+import Navbar from "./Frontend/Navbar"; // your logged-in navbar
 
-function AppShell({ uid }) {
-  // --- Search state/logic passed to Navbar ---
-  const [searchTerm, setSearchTerm] = React.useState("");
-  const [searchResults, setSearchResults] = React.useState([]);
+function RequireVerified({ user, children }) {
+  if (user === undefined) return null;        // still loading auth
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.emailVerified) return <Navigate to="/verify" replace />;
+  return children;
+}
 
-  const handleSearch = React.useCallback(async () => {
-    const term = searchTerm.trim().toLowerCase();
-    if (!term) {
-      setSearchResults([]);
-      return;
-    }
-
-    try {
-      // Pull a small batch of users and filter client-side
-      const q = query(collection(db, "Users"), limit(50));
-      const snap = await getDocs(q);
-      const results = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((u) => {
-          const fn = (u.firstName || "").toLowerCase();
-          const ln = (u.lastName || "").toLowerCase();
-          const em = (u.email || "").toLowerCase();
-          const full = (fn + " " + ln).trim();
-          return (
-            fn.includes(term) ||
-            ln.includes(term) ||
-            full.includes(term) ||
-            em.includes(term)
-          );
-        })
-        .slice(0, 12);
-
-      setSearchResults(results);
-    } catch (e) {
-      console.error("search error", e);
-      setSearchResults([]);
-    }
-  }, [searchTerm]);
-
-  // --- Hide navbar on signup/login ---
+function AppShell({ user }) {
   const location = useLocation();
-  const hideNavbar = ["/", "/login"].includes(location.pathname);
+  // Hide the logged-in navbar on pages where it doesn't make sense
+  const hideNavbar = ["/", "/login", "/verify"].includes(location.pathname);
+  const canShowNavbar = !!user && user.emailVerified && !hideNavbar;
 
   return (
     <>
-      {!hideNavbar && (
-        <Navbar
-          currentUserId={uid}
-          searchTerm={searchTerm}
-          setSearchTerm={setSearchTerm}
-          handleSearch={handleSearch}
-          searchResults={searchResults}
-        />
-      )}
+      {canShowNavbar && <Navbar currentUserId={user.uid} />}
 
       <Routes>
         <Route path="/" element={<Signup />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/profile/:uid" element={<Profile />} />
-        <Route path="/messages" element={<Messages />} />
-        <Route path="/messages/:uid" element={<Messages />} />
+        <Route path="/verify" element={<VerifyEmail />} />
+
+        <Route
+          path="/profile"
+          element={
+            <RequireVerified user={user}>
+              <Profile />
+            </RequireVerified>
+          }
+        />
+        <Route
+          path="/profile/:uid"
+          element={
+            <RequireVerified user={user}>
+              <Profile />
+            </RequireVerified>
+          }
+        />
+
+        {/* fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
   );
 }
 
 export default function App() {
-  const [uid, setUid] = useState(null);
-  const [ready, setReady] = useState(false);
+  const [user, setUser] = useState(undefined); // undefined = loading; null = signed out
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUid(u ? u.uid : null);
-      setReady(true);
-    });
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u ?? null));
     return () => unsub();
   }, []);
 
-  if (!ready) return null;
+  if (user === undefined) return null;
 
   return (
     <Router>
-      <AppShell uid={uid} />
+      <AppShell user={user} />
       <ToastContainer />
     </Router>
   );

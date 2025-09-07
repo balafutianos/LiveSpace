@@ -1,32 +1,37 @@
-import { signInWithEmailAndPassword } from "firebase/auth";
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom"; // ✅ import navigate
+import { signInWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { auth } from "./firebase";
 import { toast } from "react-toastify";
 
-function Login() {
+export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const navigate = useNavigate(); // ✅ initialize navigate
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      toast.success("User logged in Successfully", {
-        position: "top-center",
-      });
-      navigate("/profile"); // ✅ correct route
-    } catch (error) {
-      console.log(error.message);
-      toast.error(error.message, {
-        position: "bottom-center",
-      });
+      setLoading(true);
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+
+      if (!cred.user.emailVerified) {
+        try { await sendEmailVerification(cred.user); } catch {}
+        toast.info("Please verify your email. We've sent you a link.");
+        window.location.href = "/verify";
+        return;
+      }
+
+      toast.success("Welcome back!");
+      window.location.href = "/profile";
+    } catch (e) {
+      toast.error(e?.message || "Login failed");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleLogin}>
       <h3>Login</h3>
 
       <div className="mb-3">
@@ -61,4 +66,3 @@ function Login() {
   );
 }
 
-export default Login;

@@ -229,29 +229,55 @@ export default function Profile() {
         }
 
         const loaded = await getDoc(userRef);
-        if (loaded.exists()) {
-          const data = loaded.data();
-          const photo =
-            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-              ? FALLBACK_IMAGE
-              : data.photo;
-          const cover = !data.coverPhoto || data.coverPhoto === "" ? DEFAULT_COVER : data.coverPhoto;
 
-          if (!mounted) return;
-          setUserData({ ...data, photo });
-          setCoverPhoto(cover);
-          setProfileForm({
-            phone: data.phone || "",
-            email: data.email || "",
-            sex: data.sex || "Male",
-            birthday: data.birthday || "",
-            work: data.work || "",
-            about: data.about || "",
-            city: data.city || "",
-          });
-        } else if (mounted) {
-          setUserData(null);
-        }
+if (!mounted) return;
+
+if (loaded.exists()) {
+  const data = loaded.data();
+
+  if (data.deleted === true || data.active === false) {
+    setUserData(null);
+if (auth.currentUser?.uid !== viewingUserId) {
+  navigate("/"); 
+}
+
+    setCoverPhoto(DEFAULT_COVER);
+    setProfileForm({
+      phone: "", email: "", sex: "Male", birthday: "", work: "", about: "", city: "",
+    });
+    return;
+  }
+
+  const photo =
+    !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+      ? FALLBACK_IMAGE
+      : data.photo;
+
+  const cover =
+    !data.coverPhoto || data.coverPhoto === ""
+      ? DEFAULT_COVER
+      : data.coverPhoto;
+
+  setUserData({ ...data, photo });
+  setCoverPhoto(cover);
+  setProfileForm({
+    phone: data.phone || "",
+    email: data.email || "",
+    sex: data.sex || "Male",
+    birthday: data.birthday || "",
+    work: data.work || "",
+    about: data.about || "",
+    city: data.city || "",
+  });
+} else {
+  // Doc doesn’t exist at all
+  setUserData(null);
+  setCoverPhoto(DEFAULT_COVER);
+  setProfileForm({
+    phone: "", email: "", sex: "Male", birthday: "", work: "", about: "", city: "",
+  });
+}
+
 
         await fetchPosts(viewingUserId);
         await refreshFriendCount(viewingUserId);
@@ -544,6 +570,16 @@ export default function Profile() {
     });
     setEditing(false);
   };
+if (!userData) {
+  return (
+    <div className="profile-shell">
+      <div className="card">
+        <div className="card-h">Profile unavailable</div>
+        <div className="card-b">This profile is no longer available.</div>
+      </div>
+    </div>
+  );
+}
 
   // open header photo in PhotoModal
   const openHeaderPhoto = async (type, url) => {
