@@ -185,7 +185,11 @@ export default function Profile() {
   const [friendCount, setFriendCount] = useState(0);
   const [photosCount, setPhotosCount] = useState(0);
   const [recentPhotos, setRecentPhotos] = useState([]);
-
+const [editingPostId, setEditingPostId] = useState(null);
+const [editText, setEditText] = useState("");
+const [editImageFile, setEditImageFile] = useState(null);
+const [editImagePreview, setEditImagePreview] = useState(""); // url or ""
+const [editBusy, setEditBusy] = useState(false);
   const [isFriends, setIsFriends] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -388,6 +392,23 @@ if (auth.currentUser?.uid !== viewingUserId) {
     }
   }
 
+  async function deletePostPhotoRecord(uid, url) {
+  try {
+    if (!uid || !url) return;
+    const photosQ = query(
+      collection(db, "Photos"),
+      where("userId", "==", uid),
+      where("url", "==", url),
+      where("type", "==", "post")
+    );
+    const snap = await getDocs(photosQ);
+    await Promise.all(snap.docs.map((d) => deleteDoc(doc(db, "Photos", d.id))));
+  } catch (e) {
+    console.error("deletePostPhotoRecord error:", e);
+  }
+}
+
+
   async function refreshPhotoCount(uid) {
     try {
       if (!uid) return;
@@ -424,6 +445,68 @@ if (auth.currentUser?.uid !== viewingUserId) {
       setRecentPhotos([]);
     }
   }
+
+  const startEditPost = (post) => {
+  if (!post || post.userId !== auth.currentUser?.uid) return;
+  setEditingPostId(post.id);
+  setEditText(post.text || "");
+  setEditImageFile(null);
+  setEditImagePreview(post.image || ""); // keep current image as preview
+};
+
+const cancelEditPost = () => {
+  setEditingPostId(null);
+  setEditText("");
+  setEditImageFile(null);
+  setEditImagePreview("");
+  setEditBusy(false);
+};
+
+const saveEditPost = async (post) => {
+  if (!post || post.userId !== auth.currentUser?.uid) return;
+  try {
+    setEditBusy(true);
+
+    // 1) decide the image to write
+    let newImageUrl = editImagePreview || ""; // could be "" if removed
+    const previousImageUrl = post.image || "";
+
+    if (editImageFile) {
+      // user picked a new file -> upload
+      const imageRef = ref(storage, `posts/${auth.currentUser.uid}_${Date.now()}`);
+      await uploadBytes(imageRef, editImageFile);
+      newImageUrl = await getDownloadURL(imageRef);
+    }
+
+    // 2) update Firestore post
+    await updateDoc(doc(db, "Posts", post.id), {
+      text: (editText || "").trim(),
+      image: newImageUrl,                 // '' if removed
+      updatedAt: serverTimestamp(),
+    });
+
+    // 3) maintain Photos collection
+    //    - if we replaced/added image -> record it
+    if (newImageUrl && newImageUrl !== previousImageUrl) {
+      await recordPhoto(auth.currentUser.uid, newImageUrl, "post");
+    }
+    //    - if we removed or replaced a previous image -> delete its photo record
+    if (previousImageUrl && previousImageUrl !== newImageUrl) {
+      await deletePostPhotoRecord(auth.currentUser.uid, previousImageUrl);
+    }
+
+    // 4) refresh/patch local state
+    // simplest: refetch this user's posts
+    await fetchPosts(viewingUserId);
+
+    // done
+    cancelEditPost();
+  } catch (e) {
+    console.error("saveEditPost error:", e);
+    setEditBusy(false);
+  }
+};
+
 
   /* ---------- Uploads ---------- */
   const handleUploadProfile = async (file) => {
@@ -730,7 +813,7 @@ if (!userData) {
         <div className="divider" />
         <div className="stats-cell">
           <div className="num">{totalLikes}</div>
-          <div className="lbl">Likes</div>
+          <div className="lbl">Hypes</div>
         </div>
       </div>
 
@@ -821,74 +904,168 @@ if (!userData) {
             <div className="card-b">
               {posts.length === 0 && <p className="muted">No posts yet.</p>}
 
-              {posts.map((post) => (
-                <div key={post.id} className="post">
-                  {post.text && <p>{renderTextWithLinks(post.text)}</p>}
+              {posts.map((post) => {
+  const isEditing = editingPostId === post.id;
 
-                  {post.image && <img src={post.image} alt="Post" className="post-img" />}
+  if (isEditing) {
+    return (
+      <div key={post.id} className="post">
+        {/* EDIT MODE */}
+        <textarea
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          rows={4}
+          style={{ width: "100%", padding: 10 }}
+          placeholder="Edit your post…"
+        />
 
-                  {post.youtubeMeta && !post.image && (
-                    <a
-                      href={post.youtubeMeta.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open on YouTube"
-                      style={{
-                        display: "block",
-                        border: "1px solid var(--line)",
-                        borderRadius: "12px",
-                        overflow: "hidden",
-                        marginTop: 8,
-                        textDecoration: "none",
-                        color: "inherit",
-                      }}
-                    >
-                      <img
-                        src={post.youtubeMeta.thumbnail}
-                        alt="YouTube thumbnail"
-                        style={{ width: "100%", maxHeight: 360, objectFit: "cover" }}
-                        loading="lazy"
-                      />
-                      <div style={{ padding: 8, background: "var(--panel-2)" }}>
-                        <small className="muted">YOUTUBE.COM</small>
-                        <div style={{ fontWeight: 700, marginTop: 4 }}>
-                          {post.youtubeMeta.title}
-                        </div>
-                      </div>
-                    </a>
-                  )}
+        {editImagePreview ? (
+          <div style={{ marginTop: 8 }}>
+            <img
+              src={editImagePreview}
+              alt="preview"
+              className="post-img"
+              style={{ maxHeight: 360, objectFit: "cover" }}
+            />
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <label className="btn btn-ghost" style={{ cursor: "pointer" }}>
+                Replace image
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      setEditImageFile(f);
+                      setEditImagePreview(URL.createObjectURL(f));
+                    }
+                  }}
+                />
+              </label>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setEditImageFile(null);
+                  setEditImagePreview(""); // remove image
+                }}
+              >
+                Remove image
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 8 }}>
+            <label className="btn btn-ghost" style={{ cursor: "pointer" }}>
+              Add image
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) {
+                    setEditImageFile(f);
+                    setEditImagePreview(URL.createObjectURL(f));
+                  }
+                }}
+              />
+            </label>
+          </div>
+        )}
 
-                  <small className="post-meta">
-                    Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
-                  </small>
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => saveEditPost(post)}
+            disabled={editBusy}
+          >
+            {editBusy ? "Saving…" : "Save"}
+          </button>
+          <button className="btn btn-ghost" onClick={cancelEditPost} disabled={editBusy}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-                  <div className="mt-12">
-                    <Likefeature
-                      postId={post.id}
-                      postOwnerId={post.userId}
-                      likes={post.likes || []}
-                      currentUserId={auth.currentUser?.uid}
-                      onChange={(newLikes) =>
-                        setPosts((prev) =>
-                          prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
-                        )
-                      }
-                    />
-                  </div>
+  // VIEW MODE
+  return (
+    <div key={post.id} className="post">
+      {post.text && <p>{renderTextWithLinks(post.text)}</p>}
 
-                  <Comments post={post} currentUserId={auth.currentUser?.uid} />
+      {post.image && <img src={post.image} alt="Post" className="post-img" />}
 
-                  {post.userId === auth.currentUser?.uid && (
-                    <button
-                      onClick={() => handleDeletePost(post.id)}
-                      className="btn btn-ghost mt-12"
-                      style={{ color: "salmon", borderColor: "#5a2a2a" }}
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
-              ))}
+      {post.youtubeMeta && !post.image && (
+        <a
+          href={post.youtubeMeta.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open on YouTube"
+          style={{
+            display: "block",
+            border: "1px solid var(--line)",
+            borderRadius: "12px",
+            overflow: "hidden",
+            marginTop: 8,
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
+          <img
+            src={post.youtubeMeta.thumbnail}
+            alt="YouTube thumbnail"
+            style={{ width: "100%", maxHeight: 360, objectFit: "cover" }}
+            loading="lazy"
+          />
+          <div style={{ padding: 8, background: "var(--panel-2)" }}>
+            <small className="muted">YOUTUBE.COM</small>
+            <div style={{ fontWeight: 700, marginTop: 4 }}>
+              {post.youtubeMeta.title}
+            </div>
+          </div>
+        </a>
+      )}
+
+      <small className="post-meta">
+        Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
+      </small>
+
+      <div className="mt-12">
+        <Likefeature
+          postId={post.id}
+          postOwnerId={post.userId}
+          likes={post.likes || []}
+          currentUserId={auth.currentUser?.uid}
+          onChange={(newLikes) =>
+            setPosts((prev) =>
+              prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
+            )
+          }
+        />
+      </div>
+
+      <Comments post={post} currentUserId={auth.currentUser?.uid} />
+
+      {post.userId === auth.currentUser?.uid && (
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button className="btn btn-ghost" onClick={() => startEditPost(post)}>
+            Edit
+          </button>
+          <button
+            onClick={() => handleDeletePost(post.id)}
+            className="btn btn-ghost"
+            style={{ color: "salmon", borderColor: "#5a2a2a" }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+})}
+
             </div>
           </div>
         </div>

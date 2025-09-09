@@ -25,23 +25,23 @@ function ProfileInfo({
             marginTop: "-67px",
             border: "1px solid #ccc",
             borderRadius: "4px",
-            backgroundColor: "#f9f9f9"
+            background: "linear-gradient(140deg, #003d63, #ff000000)"
           }}
         >
           {/* Header */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2 style={{ margin: 0, fontSize: "20px", color: "#222" }}>Profile Card</h2>
+            <h2 style={{ margin: 0, fontSize: "20px", color: "#2cc9b6" }}>Profile Card</h2>
             {!editing ? (
               canEdit && (
                 <button onClick={() => setEditing(true)} style={{ padding: "6px 10px", fontSize: "13px" }}>
-                  Edit Profile
+                  Edit
                 </button>
               )
             ) : (
               <>
                 <button
                   onClick={handleSaveProfile}
-                  style={{ padding: "6px 10px", fontSize: "13px", marginRight: 6 }}
+                  style={{fontSize: "13px", marginRight: 6 }}
                 >
                   Save
                 </button>
@@ -82,11 +82,11 @@ function ProfileInfo({
                         type={field === "birthday" ? "date" : "text"}
                         value={profileForm[field]}
                         onChange={(e) => setProfileForm({ ...profileForm, [field]: e.target.value })}
-                        style={{ width: "100%", padding: "6px" }}
+                        style={{ width: "100%", padding: "6px",color:"#2cc9b6" }}
                       />
                     )
                   ) : (
-                    <div style={{ color: "#444" }}>
+                    <div style={{ color: "#2cc9b6" }}>
                       {userData?.[field] || <small style={{ color: "#888" }}>Not provided</small>}
                     </div>
                   )}
@@ -130,7 +130,7 @@ function ProfileInfo({
                     style={{ width: "100%", padding: 6 }}
                   />
                 ) : (
-                  <div style={{ color: "#444" }}>
+                  <div style={{ color: "#2cc9b6" }}>
                     {userData?.about || <small style={{ color: "#888" }}>Not provided</small>}
                   </div>
                 )}
@@ -145,7 +145,7 @@ function ProfileInfo({
                     style={{ width: "100%", padding: "6px" }}
                   />
                 ) : (
-                  <div style={{ color: "#444" }}>
+                  <div style={{ color: "#2cc9b6" }}>
                     {userData?.email || <small style={{ color: "#888" }}>Not provided</small>}
                   </div>
                 )}
@@ -154,7 +154,7 @@ function ProfileInfo({
           </div>
 
           {/* Member Since */}
-          <div style={{ marginTop: 12, color: "#666", fontSize: 13 }}>
+          <div style={{ marginTop: 12, color: "#2cc9b6", fontSize: 18 }}>
             <strong>Member since:</strong>{" "}
             {userData?.memberSince?.toDate
               ? userData.memberSince.toDate().toLocaleDateString()
