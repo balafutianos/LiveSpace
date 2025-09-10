@@ -94,7 +94,7 @@ export default function VerifyEmail() {
       <h1>Verify your email</h1>
       <p>
         We sent a verification link to <strong>{user?.email || "your email"}</strong>.
-        Open that email and click the link.
+        Open that email and click the link(Check your Spam folder).
       </p>
       <button onClick={resend} disabled={sending || !user || cooldown > 0}>
         {sending ? "Sending…" : cooldown > 0 ? `Resend (${cooldown})` : "Resend verification email"}

@@ -6,8 +6,9 @@ import "./Profile.css";
 import {
   doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc,
   query, where, orderBy, serverTimestamp, deleteDoc, onSnapshot,
-  getCountFromServer, limit
+  getCountFromServer, limit, deleteField
 } from "firebase/firestore";
+
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -20,6 +21,12 @@ import Comments from "./Comments";
 import FriendList from "./FriendList";
 
 import "./Profile.css";
+
+/* now put the constant */
+const PRIV_FIELDS = [
+  "phone", "phoneCountry", "phoneNumber",
+  "sex", "birthday", "work", "city", "about", "email"
+];
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER =
@@ -239,6 +246,27 @@ if (!mounted) return;
 if (loaded.exists()) {
   const data = loaded.data();
 
+  // merge private profile for owner
+  let privateData = {};
+  if (auth.currentUser?.uid === viewingUserId) {
+    const privSnap = await getDoc(doc(db, "Users", viewingUserId, "private", "profile"));
+    if (privSnap.exists()) privateData = privSnap.data();
+  }
+  const merged = (auth.currentUser?.uid === viewingUserId) ? { ...data, ...privateData } : data;
+const visibility = {};
+PRIV_FIELDS.forEach((f) => {
+  if (auth.currentUser?.uid === viewingUserId) {
+    // owner: check presence in privateData
+    visibility[f] = privateData && Object.prototype.hasOwnProperty.call(privateData, f)
+      ? "private"
+      : "public";
+  } else {
+    // someone else's profile: if not in public doc, treat as private
+    visibility[f] = Object.prototype.hasOwnProperty.call(data, f)
+      ? "public"
+      : "private";
+  } });
+
   if (data.deleted === true || data.active === false) {
     setUserData(null);
 if (auth.currentUser?.uid !== viewingUserId) {
@@ -253,25 +281,28 @@ if (auth.currentUser?.uid !== viewingUserId) {
   }
 
   const photo =
-    !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
+    !merged.photo || merged.photo === "" || merged.photo === FIREBASE_DEFAULT_IMAGE
       ? FALLBACK_IMAGE
-      : data.photo;
+      : merged.photo;
 
   const cover =
-    !data.coverPhoto || data.coverPhoto === ""
+    !merged.coverPhoto || merged.coverPhoto === ""
       ? DEFAULT_COVER
-      : data.coverPhoto;
+      : merged.coverPhoto;
 
-  setUserData({ ...data, photo });
+  setUserData({ ...merged, photo, visibility });
   setCoverPhoto(cover);
   setProfileForm({
-    phone: data.phone || "",
-    email: data.email || "",
-    sex: data.sex || "Male",
-    birthday: data.birthday || "",
-    work: data.work || "",
-    about: data.about || "",
-    city: data.city || "",
+    phone: merged.phone || "",
+    phoneCountry: merged.phoneCountry || "US",
+    phoneNumber: merged.phoneNumber ?? "",
+    email: merged.email || "",
+    sex: merged.sex || "Male",
+    birthday: merged.birthday || "",
+    work: merged.work || "",
+    about: merged.about || "",
+    city: merged.city || "",
+    visibility,
   });
 } else {
   // Doc doesn’t exist at all
@@ -611,36 +642,59 @@ const saveEditPost = async (post) => {
 
   // Save/Cancel profile
   const handleSaveProfile = async () => {
-    if (!auth.currentUser || !isOwnProfile) return;
-    try {
-      const userRef = doc(db, "Users", auth.currentUser.uid);
-      const updates = {
-        phone: profileForm.phone || "",
-        email: profileForm.email || "",
-        sex: profileForm.sex || "Male",
-        birthday: profileForm.birthday || "",
-        work: profileForm.work || "",
-        about: profileForm.about || "",
-        city: profileForm.city || "",
-      };
-      await setDoc(userRef, updates, { merge: true });
+  if (!auth.currentUser || !isOwnProfile) return;
+  try {
+    const uid = auth.currentUser.uid;
+    const vis = profileForm.visibility || {};
+    const publicUpdate = {};
+    const privateUpdate = {};
 
-      const re = await getDoc(userRef);
-      if (re.exists()) {
-        const data = re.data();
-        const photo =
-          !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-            ? FALLBACK_IMAGE
-            : data.photo;
-        setUserData({ ...data, photo });
+    const form = {
+      phone: profileForm.phone ?? "",
+      phoneCountry: profileForm.phoneCountry ?? "",
+      phoneNumber: profileForm.phoneNumber ?? "",
+      email: profileForm.email ?? "",
+      sex: profileForm.sex ?? "Male",
+      birthday: profileForm.birthday ?? "",
+      work: profileForm.work ?? "",
+      about: profileForm.about ?? "",
+      city: profileForm.city ?? "",
+    };
+
+    PRIV_FIELDS.forEach((f) => {
+      const value = form[f] ?? null;
+      if ((vis[f] || "public") === "private") {
+        privateUpdate[f] = value;
+        publicUpdate[f] = deleteField();
+      } else {
+        publicUpdate[f] = value;
+        privateUpdate[f] = deleteField();
       }
-      setEditing(false);
-    } catch (err) {
-      console.error("Error saving profile:", err);
-    }
-  };
+    });
 
-  const handleCancelEdit = () => {
+    const userRef = doc(db, "Users", uid);
+    await setDoc(userRef, publicUpdate, { merge: true });
+    await setDoc(doc(db, "Users", uid, "private", "profile"), privateUpdate, { merge: true });
+
+    const re = await getDoc(userRef);
+    const publicData = re.exists() ? re.data() : {};
+    let privateData = {};
+    const privSnap = await getDoc(doc(db, "Users", uid, "private", "profile"));
+    if (privSnap.exists()) privateData = privSnap.data();
+
+    const merged = { ...publicData, ...privateData };
+    const photo =
+      !merged.photo || merged.photo === "" || merged.photo === FIREBASE_DEFAULT_IMAGE
+        ? FALLBACK_IMAGE
+        : merged.photo;
+
+    setUserData({ ...merged, photo, visibility: vis });
+    setEditing(false);
+  } catch (err) {
+    console.error("Error saving profile:", err);
+  }
+};;
+      const handleCancelEdit = () => {
     if (!userData) return;
     setProfileForm({
       phone: userData.phone || "",
@@ -656,7 +710,7 @@ const saveEditPost = async (post) => {
 if (!userData) {
   return (
     <div className="profile-shell">
-      <div className="card">
+      <div className="card profile-info-card">
         <div className="card-h">Profile unavailable</div>
         <div className="card-b">This profile is no longer available.</div>
       </div>

@@ -42,6 +42,7 @@ img { display:block; max-width:100%; }
   object-fit: cover;
   filter: saturate(85%);
 }
+
 .profile-cover::after{
   content:"";
   position:absolute; inset:0;
@@ -130,7 +131,7 @@ img { display:block; max-width:100%; }
   margin-top: 18px;
   display: grid;
   grid-template-columns: 320px 1fr 1fr;
-  gap: 18px;
+  gap: 26px;
   align-items: start;
   position: relative;
 }
@@ -290,6 +291,60 @@ img { display:block; max-width:100%; }
   text-overflow: ellipsis;
 }
 
+/* --- Profile Info card: center it and kill the inner scrollbar --- */
+/* This targets the FIRST card in the left column (your Profile Info card) */
+.col-left > .card:first-child {
+  max-width: 480px;          /* tweak to taste */
+  margin: 0 auto;            /* centers the whole card */
+}
+
+/* Remove any inner scrolling/max-height that causes the skinny scrollbar */
+.col-left > .card:first-child .card-b {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
+/* If any nested element has inline overflow/max-height, override it too */
+.col-left > .card:first-child .card-b [style*="overflow"] {
+  overflow: visible !important;
+}
+.col-left > .card:first-child .card-b [style*="max-height"] {
+  max-height: none !important;
+}
+
+/* Make all inputs/selects/textareas inside the card fill their column cleanly */
+.col-left > .card:first-child .card-b input,
+.col-left > .card:first-child .card-b select,
+.col-left > .card:first-child .card-b textarea {
+  width: 100%;
+}
+
+/* Lay out the fields in two balanced columns with good spacing */
+.col-left > .card:first-child .card-b > div {
+  /* Your JSX uses an inline flex container; force a neat grid instead */
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* On small screens, collapse to one column */
+@media (max-width: 780px) {
+  .col-left > .card:first-child .card-b > div {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Pills/toggles row: prevent wrapping glitches and odd offsets */
+.col-left > .card:first-child .card-b [class*="pill"],
+.col-left > .card:first-child .card-b [class*="chip"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+  margin-left: 0 !important;     /* removes any negative margin from inline styles */
+}
+
+
 /* skeletons */
 .friend-card.skeleton{ animation: pulse 1.1s infinite ease-in-out; }
 .friend-img-skel{
@@ -303,3 +358,44 @@ img { display:block; max-width:100%; }
   50% { opacity: 1 }
   100% { opacity: .7 }
 }
+.profile-info-card {
+  max-width: 480px;
+  margin: 0 auto;                 /* center horizontally */
+}
+
+/* Make sure nothing inside forces a scrollable region */
+.profile-info-card .card-b {
+  overflow: visible !important;
+  max-height: none !important;
+}
+
+/* Nuke inline overflow/max-height that some JSX sets */
+.profile-info-card .card-b [style*="overflow"] {
+  overflow: visible !important;
+}
+.profile-info-card .card-b [style*="max-height"] {
+  max-height: none !important;
+}
+
+/* Keep textareas usable (let them scroll if the text is long) */
+.profile-info-card .card-b textarea {
+  overflow: auto !important;
+}
+
+/* Remove any negative left offsets from pills/chips */
+.profile-info-card .card-b [style*="margin-left:-"] {
+  margin-left: 0 !important;
+}
+
+/* Tidy two-column layout for fields; collapses on small screens */
+.profile-info-card .card-b > div {
+  display: grid !important;       /* override inline flex */
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 780px) {
+  .profile-info-card .card-b > div {
+    grid-template-columns: 1fr;
+  }
+}
+
