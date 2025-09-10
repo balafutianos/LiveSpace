@@ -6,8 +6,9 @@ import "./Profile.css";
 import {
   doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc,
   query, where, orderBy, serverTimestamp, deleteDoc, onSnapshot,
-  getCountFromServer, limit
+  getCountFromServer, limit, deleteField
 } from "firebase/firestore";
+
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -20,6 +21,12 @@ import Comments from "./Comments";
 import FriendList from "./FriendList";
 
 import "./Profile.css";
+
+/* now put the constant */
+const PRIV_FIELDS = [
+  "phone", "phoneCountry", "phoneNumber",
+  "sex", "birthday", "work", "city", "about", "email"
+];
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
 const DEFAULT_COVER =
@@ -185,7 +192,11 @@ export default function Profile() {
   const [friendCount, setFriendCount] = useState(0);
   const [photosCount, setPhotosCount] = useState(0);
   const [recentPhotos, setRecentPhotos] = useState([]);
-
+const [editingPostId, setEditingPostId] = useState(null);
+const [editText, setEditText] = useState("");
+const [editImageFile, setEditImageFile] = useState(null);
+const [editImagePreview, setEditImagePreview] = useState(""); // url or ""
+const [editBusy, setEditBusy] = useState(false);
   const [isFriends, setIsFriends] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -229,29 +240,79 @@ export default function Profile() {
         }
 
         const loaded = await getDoc(userRef);
-        if (loaded.exists()) {
-          const data = loaded.data();
-          const photo =
-            !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-              ? FALLBACK_IMAGE
-              : data.photo;
-          const cover = !data.coverPhoto || data.coverPhoto === "" ? DEFAULT_COVER : data.coverPhoto;
 
-          if (!mounted) return;
-          setUserData({ ...data, photo });
-          setCoverPhoto(cover);
-          setProfileForm({
-            phone: data.phone || "",
-            email: data.email || "",
-            sex: data.sex || "Male",
-            birthday: data.birthday || "",
-            work: data.work || "",
-            about: data.about || "",
-            city: data.city || "",
-          });
-        } else if (mounted) {
-          setUserData(null);
-        }
+if (!mounted) return;
+
+if (loaded.exists()) {
+  const data = loaded.data();
+
+  // merge private profile for owner
+  let privateData = {};
+  if (auth.currentUser?.uid === viewingUserId) {
+    const privSnap = await getDoc(doc(db, "Users", viewingUserId, "private", "profile"));
+    if (privSnap.exists()) privateData = privSnap.data();
+  }
+  const merged = (auth.currentUser?.uid === viewingUserId) ? { ...data, ...privateData } : data;
+const visibility = {};
+PRIV_FIELDS.forEach((f) => {
+  if (auth.currentUser?.uid === viewingUserId) {
+    // owner: check presence in privateData
+    visibility[f] = privateData && Object.prototype.hasOwnProperty.call(privateData, f)
+      ? "private"
+      : "public";
+  } else {
+    // someone else's profile: if not in public doc, treat as private
+    visibility[f] = Object.prototype.hasOwnProperty.call(data, f)
+      ? "public"
+      : "private";
+  } });
+
+  if (data.deleted === true || data.active === false) {
+    setUserData(null);
+if (auth.currentUser?.uid !== viewingUserId) {
+  navigate("/"); 
+}
+
+    setCoverPhoto(DEFAULT_COVER);
+    setProfileForm({
+      phone: "", email: "", sex: "Male", birthday: "", work: "", about: "", city: "",
+    });
+    return;
+  }
+
+  const photo =
+    !merged.photo || merged.photo === "" || merged.photo === FIREBASE_DEFAULT_IMAGE
+      ? FALLBACK_IMAGE
+      : merged.photo;
+
+  const cover =
+    !merged.coverPhoto || merged.coverPhoto === ""
+      ? DEFAULT_COVER
+      : merged.coverPhoto;
+
+  setUserData({ ...merged, photo, visibility });
+  setCoverPhoto(cover);
+  setProfileForm({
+    phone: merged.phone || "",
+    phoneCountry: merged.phoneCountry || "US",
+    phoneNumber: merged.phoneNumber ?? "",
+    email: merged.email || "",
+    sex: merged.sex || "Male",
+    birthday: merged.birthday || "",
+    work: merged.work || "",
+    about: merged.about || "",
+    city: merged.city || "",
+    visibility,
+  });
+} else {
+  // Doc doesn’t exist at all
+  setUserData(null);
+  setCoverPhoto(DEFAULT_COVER);
+  setProfileForm({
+    phone: "", email: "", sex: "Male", birthday: "", work: "", about: "", city: "",
+  });
+}
+
 
         await fetchPosts(viewingUserId);
         await refreshFriendCount(viewingUserId);
@@ -362,6 +423,23 @@ export default function Profile() {
     }
   }
 
+  async function deletePostPhotoRecord(uid, url) {
+  try {
+    if (!uid || !url) return;
+    const photosQ = query(
+      collection(db, "Photos"),
+      where("userId", "==", uid),
+      where("url", "==", url),
+      where("type", "==", "post")
+    );
+    const snap = await getDocs(photosQ);
+    await Promise.all(snap.docs.map((d) => deleteDoc(doc(db, "Photos", d.id))));
+  } catch (e) {
+    console.error("deletePostPhotoRecord error:", e);
+  }
+}
+
+
   async function refreshPhotoCount(uid) {
     try {
       if (!uid) return;
@@ -398,6 +476,68 @@ export default function Profile() {
       setRecentPhotos([]);
     }
   }
+
+  const startEditPost = (post) => {
+  if (!post || post.userId !== auth.currentUser?.uid) return;
+  setEditingPostId(post.id);
+  setEditText(post.text || "");
+  setEditImageFile(null);
+  setEditImagePreview(post.image || ""); // keep current image as preview
+};
+
+const cancelEditPost = () => {
+  setEditingPostId(null);
+  setEditText("");
+  setEditImageFile(null);
+  setEditImagePreview("");
+  setEditBusy(false);
+};
+
+const saveEditPost = async (post) => {
+  if (!post || post.userId !== auth.currentUser?.uid) return;
+  try {
+    setEditBusy(true);
+
+    // 1) decide the image to write
+    let newImageUrl = editImagePreview || ""; // could be "" if removed
+    const previousImageUrl = post.image || "";
+
+    if (editImageFile) {
+      // user picked a new file -> upload
+      const imageRef = ref(storage, `posts/${auth.currentUser.uid}_${Date.now()}`);
+      await uploadBytes(imageRef, editImageFile);
+      newImageUrl = await getDownloadURL(imageRef);
+    }
+
+    // 2) update Firestore post
+    await updateDoc(doc(db, "Posts", post.id), {
+      text: (editText || "").trim(),
+      image: newImageUrl,                 // '' if removed
+      updatedAt: serverTimestamp(),
+    });
+
+    // 3) maintain Photos collection
+    //    - if we replaced/added image -> record it
+    if (newImageUrl && newImageUrl !== previousImageUrl) {
+      await recordPhoto(auth.currentUser.uid, newImageUrl, "post");
+    }
+    //    - if we removed or replaced a previous image -> delete its photo record
+    if (previousImageUrl && previousImageUrl !== newImageUrl) {
+      await deletePostPhotoRecord(auth.currentUser.uid, previousImageUrl);
+    }
+
+    // 4) refresh/patch local state
+    // simplest: refetch this user's posts
+    await fetchPosts(viewingUserId);
+
+    // done
+    cancelEditPost();
+  } catch (e) {
+    console.error("saveEditPost error:", e);
+    setEditBusy(false);
+  }
+};
+
 
   /* ---------- Uploads ---------- */
   const handleUploadProfile = async (file) => {
@@ -502,36 +642,59 @@ export default function Profile() {
 
   // Save/Cancel profile
   const handleSaveProfile = async () => {
-    if (!auth.currentUser || !isOwnProfile) return;
-    try {
-      const userRef = doc(db, "Users", auth.currentUser.uid);
-      const updates = {
-        phone: profileForm.phone || "",
-        email: profileForm.email || "",
-        sex: profileForm.sex || "Male",
-        birthday: profileForm.birthday || "",
-        work: profileForm.work || "",
-        about: profileForm.about || "",
-        city: profileForm.city || "",
-      };
-      await setDoc(userRef, updates, { merge: true });
+  if (!auth.currentUser || !isOwnProfile) return;
+  try {
+    const uid = auth.currentUser.uid;
+    const vis = profileForm.visibility || {};
+    const publicUpdate = {};
+    const privateUpdate = {};
 
-      const re = await getDoc(userRef);
-      if (re.exists()) {
-        const data = re.data();
-        const photo =
-          !data.photo || data.photo === "" || data.photo === FIREBASE_DEFAULT_IMAGE
-            ? FALLBACK_IMAGE
-            : data.photo;
-        setUserData({ ...data, photo });
+    const form = {
+      phone: profileForm.phone ?? "",
+      phoneCountry: profileForm.phoneCountry ?? "",
+      phoneNumber: profileForm.phoneNumber ?? "",
+      email: profileForm.email ?? "",
+      sex: profileForm.sex ?? "Male",
+      birthday: profileForm.birthday ?? "",
+      work: profileForm.work ?? "",
+      about: profileForm.about ?? "",
+      city: profileForm.city ?? "",
+    };
+
+    PRIV_FIELDS.forEach((f) => {
+      const value = form[f] ?? null;
+      if ((vis[f] || "public") === "private") {
+        privateUpdate[f] = value;
+        publicUpdate[f] = deleteField();
+      } else {
+        publicUpdate[f] = value;
+        privateUpdate[f] = deleteField();
       }
-      setEditing(false);
-    } catch (err) {
-      console.error("Error saving profile:", err);
-    }
-  };
+    });
 
-  const handleCancelEdit = () => {
+    const userRef = doc(db, "Users", uid);
+    await setDoc(userRef, publicUpdate, { merge: true });
+    await setDoc(doc(db, "Users", uid, "private", "profile"), privateUpdate, { merge: true });
+
+    const re = await getDoc(userRef);
+    const publicData = re.exists() ? re.data() : {};
+    let privateData = {};
+    const privSnap = await getDoc(doc(db, "Users", uid, "private", "profile"));
+    if (privSnap.exists()) privateData = privSnap.data();
+
+    const merged = { ...publicData, ...privateData };
+    const photo =
+      !merged.photo || merged.photo === "" || merged.photo === FIREBASE_DEFAULT_IMAGE
+        ? FALLBACK_IMAGE
+        : merged.photo;
+
+    setUserData({ ...merged, photo, visibility: vis });
+    setEditing(false);
+  } catch (err) {
+    console.error("Error saving profile:", err);
+  }
+};;
+      const handleCancelEdit = () => {
     if (!userData) return;
     setProfileForm({
       phone: userData.phone || "",
@@ -544,6 +707,16 @@ export default function Profile() {
     });
     setEditing(false);
   };
+if (!userData) {
+  return (
+    <div className="profile-shell">
+      <div className="card profile-info-card">
+        <div className="card-h">Profile unavailable</div>
+        <div className="card-b">This profile is no longer available.</div>
+      </div>
+    </div>
+  );
+}
 
   // open header photo in PhotoModal
   const openHeaderPhoto = async (type, url) => {
@@ -694,7 +867,7 @@ export default function Profile() {
         <div className="divider" />
         <div className="stats-cell">
           <div className="num">{totalLikes}</div>
-          <div className="lbl">Likes</div>
+          <div className="lbl">Hypes</div>
         </div>
       </div>
 
@@ -785,74 +958,168 @@ export default function Profile() {
             <div className="card-b">
               {posts.length === 0 && <p className="muted">No posts yet.</p>}
 
-              {posts.map((post) => (
-                <div key={post.id} className="post">
-                  {post.text && <p>{renderTextWithLinks(post.text)}</p>}
+              {posts.map((post) => {
+  const isEditing = editingPostId === post.id;
 
-                  {post.image && <img src={post.image} alt="Post" className="post-img" />}
+  if (isEditing) {
+    return (
+      <div key={post.id} className="post">
+        {/* EDIT MODE */}
+        <textarea
+          value={editText}
+          onChange={(e) => setEditText(e.target.value)}
+          rows={4}
+          style={{ width: "100%", padding: 10 }}
+          placeholder="Edit your post…"
+        />
 
-                  {post.youtubeMeta && !post.image && (
-                    <a
-                      href={post.youtubeMeta.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open on YouTube"
-                      style={{
-                        display: "block",
-                        border: "1px solid var(--line)",
-                        borderRadius: "12px",
-                        overflow: "hidden",
-                        marginTop: 8,
-                        textDecoration: "none",
-                        color: "inherit",
-                      }}
-                    >
-                      <img
-                        src={post.youtubeMeta.thumbnail}
-                        alt="YouTube thumbnail"
-                        style={{ width: "100%", maxHeight: 360, objectFit: "cover" }}
-                        loading="lazy"
-                      />
-                      <div style={{ padding: 8, background: "var(--panel-2)" }}>
-                        <small className="muted">YOUTUBE.COM</small>
-                        <div style={{ fontWeight: 700, marginTop: 4 }}>
-                          {post.youtubeMeta.title}
-                        </div>
-                      </div>
-                    </a>
-                  )}
+        {editImagePreview ? (
+          <div style={{ marginTop: 8 }}>
+            <img
+              src={editImagePreview}
+              alt="preview"
+              className="post-img"
+              style={{ maxHeight: 360, objectFit: "cover" }}
+            />
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <label className="btn btn-ghost" style={{ cursor: "pointer" }}>
+                Replace image
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      setEditImageFile(f);
+                      setEditImagePreview(URL.createObjectURL(f));
+                    }
+                  }}
+                />
+              </label>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setEditImageFile(null);
+                  setEditImagePreview(""); // remove image
+                }}
+              >
+                Remove image
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 8 }}>
+            <label className="btn btn-ghost" style={{ cursor: "pointer" }}>
+              Add image
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) {
+                    setEditImageFile(f);
+                    setEditImagePreview(URL.createObjectURL(f));
+                  }
+                }}
+              />
+            </label>
+          </div>
+        )}
 
-                  <small className="post-meta">
-                    Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
-                  </small>
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => saveEditPost(post)}
+            disabled={editBusy}
+          >
+            {editBusy ? "Saving…" : "Save"}
+          </button>
+          <button className="btn btn-ghost" onClick={cancelEditPost} disabled={editBusy}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-                  <div className="mt-12">
-                    <Likefeature
-                      postId={post.id}
-                      postOwnerId={post.userId}
-                      likes={post.likes || []}
-                      currentUserId={auth.currentUser?.uid}
-                      onChange={(newLikes) =>
-                        setPosts((prev) =>
-                          prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
-                        )
-                      }
-                    />
-                  </div>
+  // VIEW MODE
+  return (
+    <div key={post.id} className="post">
+      {post.text && <p>{renderTextWithLinks(post.text)}</p>}
 
-                  <Comments post={post} currentUserId={auth.currentUser?.uid} />
+      {post.image && <img src={post.image} alt="Post" className="post-img" />}
 
-                  {post.userId === auth.currentUser?.uid && (
-                    <button
-                      onClick={() => handleDeletePost(post.id)}
-                      className="btn btn-ghost mt-12"
-                      style={{ color: "salmon", borderColor: "#5a2a2a" }}
-                    >
-                      Delete
-                    </button>
-                  )}
-                </div>
-              ))}
+      {post.youtubeMeta && !post.image && (
+        <a
+          href={post.youtubeMeta.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open on YouTube"
+          style={{
+            display: "block",
+            border: "1px solid var(--line)",
+            borderRadius: "12px",
+            overflow: "hidden",
+            marginTop: 8,
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
+          <img
+            src={post.youtubeMeta.thumbnail}
+            alt="YouTube thumbnail"
+            style={{ width: "100%", maxHeight: 360, objectFit: "cover" }}
+            loading="lazy"
+          />
+          <div style={{ padding: 8, background: "var(--panel-2)" }}>
+            <small className="muted">YOUTUBE.COM</small>
+            <div style={{ fontWeight: 700, marginTop: 4 }}>
+              {post.youtubeMeta.title}
+            </div>
+          </div>
+        </a>
+      )}
+
+      <small className="post-meta">
+        Posted on {post.createdAt?.toDate ? post.createdAt.toDate().toLocaleString() : ""}
+      </small>
+
+      <div className="mt-12">
+        <Likefeature
+          postId={post.id}
+          postOwnerId={post.userId}
+          likes={post.likes || []}
+          currentUserId={auth.currentUser?.uid}
+          onChange={(newLikes) =>
+            setPosts((prev) =>
+              prev.map((p) => (p.id === post.id ? { ...p, likes: newLikes } : p))
+            )
+          }
+        />
+      </div>
+
+      <Comments post={post} currentUserId={auth.currentUser?.uid} />
+
+      {post.userId === auth.currentUser?.uid && (
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button className="btn btn-ghost" onClick={() => startEditPost(post)}>
+            Edit
+          </button>
+          <button
+            onClick={() => handleDeletePost(post.id)}
+            className="btn btn-ghost"
+            style={{ color: "salmon", borderColor: "#5a2a2a" }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+})}
+
             </div>
           </div>
         </div>

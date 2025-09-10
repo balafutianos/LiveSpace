@@ -101,7 +101,7 @@ export default function Likefeature({
         }}
         aria-pressed={hasLiked}
       >
-        {hasLiked ? "Unlike" : "Like"}
+        {hasLiked ? "Unhype" : "Hype"}
       </button>
       <span style={{ color: "#555", fontSize: 14 }}>{count}</span>
     </div>

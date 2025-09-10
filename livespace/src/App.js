@@ -1,19 +1,28 @@
 // App.jsx
 import React, { useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { ToastContainer } from "react-toastify";
 import { collection, getDocs, limit, query } from "firebase/firestore";
 
-import { auth, db } from "./Frontend/firebase";   // adjust path if needed
+import { auth, db } from "./Frontend/firebase";
 import Navbar from "./Frontend/Navbar";
 
 import Signup from "./Frontend/Signup";
 import Login from "./Frontend/Login";
+import VerifyEmail from "./Frontend/VerifyEmail";
 import Profile from "./Frontend/Profile";
 import Messages from "./Frontend/Messages";
 
-function AppShell({ uid }) {
+/* ---------- Guard: require signed-in + verified email ---------- */
+function RequireVerified({ user, children }) {
+  if (user === undefined) return null;            // still loading
+  if (!user) return <Navigate to="/login" replace />;
+  if (!user.emailVerified) return <Navigate to="/verify" replace />;
+  return children;
+}
+
+function AppShell({ user }) {
   // --- Search state/logic passed to Navbar ---
   const [searchTerm, setSearchTerm] = React.useState("");
   const [searchResults, setSearchResults] = React.useState([]);
@@ -26,7 +35,6 @@ function AppShell({ uid }) {
     }
 
     try {
-      // Pull a small batch of users and filter client-side
       const q = query(collection(db, "Users"), limit(50));
       const snap = await getDocs(q);
       const results = snap.docs
@@ -52,15 +60,15 @@ function AppShell({ uid }) {
     }
   }, [searchTerm]);
 
-  // --- Hide navbar on signup/login ---
+  // --- Hide navbar on signup/login/verify ---
   const location = useLocation();
-  const hideNavbar = ["/", "/login"].includes(location.pathname);
+  const hideNavbar = ["/", "/login", "/verify"].includes(location.pathname);
 
   return (
     <>
-      {!hideNavbar && (
+      {!hideNavbar && user && user.emailVerified && (
         <Navbar
-          currentUserId={uid}
+          currentUserId={user.uid}
           searchTerm={searchTerm}
           setSearchTerm={setSearchTerm}
           handleSearch={handleSearch}
@@ -69,34 +77,64 @@ function AppShell({ uid }) {
       )}
 
       <Routes>
+        {/* Public */}
         <Route path="/" element={<Signup />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/profile/:uid" element={<Profile />} />
-        <Route path="/messages" element={<Messages />} />
-        <Route path="/messages/:uid" element={<Messages />} />
+        <Route path="/verify" element={<VerifyEmail />} />
+
+        {/* Protected (must be verified) */}
+        <Route
+          path="/profile"
+          element={
+            <RequireVerified user={user}>
+              <Profile />
+            </RequireVerified>
+          }
+        />
+        <Route
+          path="/profile/:uid"
+          element={
+            <RequireVerified user={user}>
+              <Profile />
+            </RequireVerified>
+          }
+        />
+        <Route
+          path="/messages"
+          element={
+            <RequireVerified user={user}>
+              <Messages />
+            </RequireVerified>
+          }
+        />
+        <Route
+          path="/messages/:uid"
+          element={
+            <RequireVerified user={user}>
+              <Messages />
+            </RequireVerified>
+          }
+        />
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
   );
 }
 
 export default function App() {
-  const [uid, setUid] = useState(null);
-  const [ready, setReady] = useState(false);
-
+  const [user, setUser] = useState(undefined); // undefined=loading
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUid(u ? u.uid : null);
-      setReady(true);
-    });
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u ?? null));
     return () => unsub();
   }, []);
 
-  if (!ready) return null;
+  if (user === undefined) return null;
 
   return (
     <Router>
-      <AppShell uid={uid} />
+      <AppShell user={user} />
       <ToastContainer />
     </Router>
   );

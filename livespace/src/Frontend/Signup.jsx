@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { auth, db } from "./firebase";
 import { setDoc, doc } from "firebase/firestore";
 import { toast } from "react-toastify";
@@ -13,7 +13,6 @@ function Signup() {
   const [showPassword, setShowPassword] = useState(false);     // NEW
   const [fname, setFname] = useState("");
   const [lname, setLname] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({
     fname: "",
@@ -52,48 +51,44 @@ function Signup() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    setErrors({ fname: "", lname: "", email: "", confirmEmail: "", password: "", general: "" });
 
-    // Client-side validation
-    const next = {};
-    if (!fname.trim()) next.fname = "First name is required.";
-    if (!email.trim()) next.email = "Email is required.";
-
-    // Email confirmation check (case-insensitive compare)
+    const issues = {};
+    if (!email.trim()) issues.email = "Email is required.";
     if (email.trim().toLowerCase() !== confirmEmail.trim().toLowerCase()) {
-      next.confirmEmail = "Email addresses do not match.";
+      issues.confirmEmail = "Emails do not match.";
     }
-
     const pwIssue = passwordIssue(password);
-    if (pwIssue) next.password = pwIssue;
+    if (pwIssue) issues.password = pwIssue;
 
-    if (Object.keys(next).length) {
-      setErrors((prev) => ({ ...prev, ...next }));
+    if (Object.keys(issues).length) {
+      Object.values(issues).forEach((m) => toast.error(m));
       return;
     }
 
     try {
       setLoading(true);
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-
       const user = cred.user;
-      await setDoc(doc(db, "Users", user.uid), {
-        email: user.email?.toLowerCase() || email.trim().toLowerCase(),
-        firstName: fname.trim(),
-        lastName: lname.trim(),
-        photo: "https://i.imgur.com/qzsiOuh.png",
-        createdAt: new Date().toISOString(),
-      });
-
-      toast.success("User Registered Successfully!!", { position: "top-center" });
-      window.location.href = "/profile";
-    } catch (error) {
-      const friendly = mapFirebaseError(error.code);
-      setErrors((prev) => ({ ...prev, ...friendly }));
-      toast.error(
-        friendly.general || friendly.email || friendly.password || error.message || "Sign up failed",
-        { position: "bottom-center" }
-      );
+const display = (user.displayName || "").trim();
+const [first, ...rest] = display ? display.split(" ") : [email.split("@")[0]];
+const firstName = (typeof fname === "string" && fname.trim()) || (first || "User");
+const lastName  = (typeof lname === "string" && lname.trim()) || (rest.join(" ") || "")
+await setDoc(doc(db, "Users", user.uid), {
+  email: user.email?.toLowerCase() || email.trim().toLowerCase(),
+  firstName,
+  lastName,
+  photo: "https://i.imgur.com/qzsiOuh.png",
+  createdAt: new Date().toISOString(),
+}, { merge: true });
+      try {
+        await sendEmailVerification(cred.user);
+        toast.info("Verification email sent. Please check your inbox.");
+      } catch {
+        toast.error("Couldn't send verification right now. You can resend later.");
+      }
+      window.location.href = "/verify";
+    } catch (e) {
+      toast.error(e?.message || "Sign up failed");
     } finally {
       setLoading(false);
     }

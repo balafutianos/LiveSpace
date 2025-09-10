@@ -1,26 +1,27 @@
+// src/Frontend/Navbar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { db } from "./firebase";
+import { auth, db } from "./firebase";
 import { signOut } from "firebase/auth";
-import { auth } from "./firebase";
 
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
   updateDoc,
   where,
-  addDoc,
-  serverTimestamp,
 } from "firebase/firestore";
 import "./navbar-dark.css";
 
 /**
- * Props expected:
+ * Props (all optional except currentUserId in logged-in views):
  * - currentUserId
  * - searchTerm, setSearchTerm, handleSearch, searchResults
  */
@@ -31,8 +32,10 @@ export default function Navbar({
   handleSearch,
   searchResults = [],
 }) {
-  // Fallback search state if parent doesn’t provide
+  // Local search fallback (if parent doesn't provide search)
   const [localSearchTerm, setLocalSearchTerm] = useState("");
+  const [localResults, setLocalResults] = useState([]);
+
   const effectiveSearchTerm =
     searchTerm !== undefined ? searchTerm : localSearchTerm;
   const effectiveSetSearchTerm =
@@ -45,11 +48,11 @@ export default function Navbar({
   // sound + “new unread” detection
   const audioRef = useRef(null);
   const lastUnreadRef = useRef(0);
-  const [canPlaySound, setCanPlaySound] = useState(false); // becomes true after any user interaction
+  const [canPlaySound, setCanPlaySound] = useState(false);
 
   // counts + lists
-  const [pendingReqs, setPendingReqs] = useState([]); // FriendRequests docs (to me, pending)
-  const [notifs, setNotifs] = useState([]);           // latest notifications to me
+  const [pendingReqs, setPendingReqs] = useState([]);
+  const [notifs, setNotifs] = useState([]);
   const [unreadMsgCount, setUnreadMsgCount] = useState(0);
   const [acceptingId, setAcceptingId] = useState(null);
 
@@ -61,13 +64,28 @@ export default function Navbar({
 
   const buildName = (u = {}) => {
     const fn =
-      u.firstName ?? u.firstname ?? u.first_name ?? u.givenName ?? u.given_name ?? "";
+      u.firstName ??
+      u.firstname ??
+      u.first_name ??
+      u.givenName ??
+      u.given_name ??
+      "";
     const ln =
-      u.lastName ?? u.lastname ?? u.last_name ?? u.familyName ?? u.family_name ?? "";
+      u.lastName ??
+      u.lastname ??
+      u.last_name ??
+      u.familyName ??
+      u.family_name ??
+      "";
     const byFirstLast = `${fn} ${ln}`.trim();
     if (byFirstLast) return byFirstLast;
     const disp =
-      u.displayName ?? u.display_name ?? u.name ?? u.fullName ?? u.full_name ?? "";
+      u.displayName ??
+      u.display_name ??
+      u.name ??
+      u.fullName ??
+      u.full_name ??
+      "";
     if (disp) return String(disp).trim();
     if (u.email) return String(u.email).split("@")[0];
     return "Someone";
@@ -78,6 +96,32 @@ export default function Navbar({
     if (p && p !== FIREBASE_DEFAULT_IMAGE) return p;
     return FALLBACK_IMAGE;
   };
+
+  // ---------- NEW: robust “hidden account” helpers ----------
+  const isTruthyFlag = (v) => v === true || v === "true" || v === 1;
+  const isFalsyFlag = (v) => v === false || v === "false" || v === 0;
+  const hasValue = (v) => v !== undefined && v !== null && v !== "";
+  const toLower = (s) => (typeof s === "string" ? s.toLowerCase() : "");
+
+  const isUserDeletedOrHidden = (u = {}) => {
+    // boolean-ish flags
+    if (isTruthyFlag(u.deleted)) return true;
+    if (isTruthyFlag(u.disabled)) return true;
+
+    // timestamp / date-style soft delete
+    if (hasValue(u.deletedAt)) return true;
+
+    // prefer active:true model (treat explicit false/0/"false" as hidden)
+    if (isFalsyFlag(u.active)) return true;
+
+    // status-based
+    const s = toLower(u.status);
+    if (s && ["deleted", "disabled", "deactivated", "banned", "suspended"].includes(s)) {
+      return true;
+    }
+    return false;
+  };
+  // ----------------------------------------------------------
 
   // UI state
   const [openSearch, setOpenSearch] = useState(false);
@@ -104,7 +148,7 @@ export default function Navbar({
     };
   }, [currentUserId]);
 
-  // subscribe: pending friend requests (no index required; sort in memory)
+  // subscribe: pending friend requests
   useEffect(() => {
     if (!currentUserId) return;
 
@@ -112,7 +156,6 @@ export default function Navbar({
       collection(db, "FriendRequests"),
       where("toId", "==", currentUserId),
       where("status", "==", "pending")
-      // NOTE: intentionally no orderBy here to avoid composite index requirement
     );
 
     const toMs = (t) =>
@@ -128,7 +171,6 @@ export default function Navbar({
       qy,
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // newest first
         list.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
         setPendingReqs(list);
       },
@@ -138,7 +180,47 @@ export default function Navbar({
     return unsub;
   }, [currentUserId]);
 
-  // hydrate mini profiles for senders of pending requests
+  const runLocalSearch = async () => {
+    try {
+      const term = (effectiveSearchTerm || "").trim().toLowerCase();
+      if (!term) {
+        setLocalResults([]);
+        return;
+      }
+
+      // (Best) If your schema has active:true or status:"active", prefer one of these:
+      // const qy = query(collection(db, "Users"), where("active", "==", true), limit(50));
+      // const qy = query(collection(db, "Users"), where("status", "==", "active"), limit(50));
+      // (Fallback) otherwise fetch a small page and filter client-side:
+      const qy = query(collection(db, "Users"), limit(50));
+      const snap = await getDocs(qy);
+
+      const results = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((u) => {
+          if (isUserDeletedOrHidden(u)) return false;
+
+          const fn = (u.firstName || "").toLowerCase();
+          const ln = (u.lastName || "").toLowerCase();
+          const em = (u.email || "").toLowerCase();
+          const full = (fn + " " + ln).trim();
+
+          return (
+            fn.includes(term) ||
+            ln.includes(term) ||
+            full.includes(term) ||
+            em.includes(term)
+          );
+        })
+        .slice(0, 12);
+
+      setLocalResults(results);
+    } catch (e) {
+      console.error("navbar local search error", e);
+      setLocalResults([]);
+    }
+  };
+
   useEffect(() => {
     if (!currentUserId || pendingReqs.length === 0) return;
     const missing = Array.from(
@@ -175,7 +257,7 @@ export default function Navbar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserId, pendingReqs]);
 
-  // subscribe: latest notifications (keep orderBy; you likely have this index already)
+  // subscribe: latest notifications
   useEffect(() => {
     if (!currentUserId) return;
     const qy = query(
@@ -190,45 +272,41 @@ export default function Navbar({
     return unsub;
   }, [currentUserId]);
 
-  // subscribe: unread messages count (rules-compliant, 1 array-contains only)
-useEffect(() => {
-  if (!currentUserId) return;
-  let unsub;
-  try {
-    const qy = query(
-      collection(db, "Messages"),
-      where("userIds", "array-contains", currentUserId)
-    );
-    unsub = onSnapshot(
-      qy,
-      (snap) => {
-        // Filter client-side because we can't use two array-contains in one query
-        const count = snap.docs.reduce((acc, d) => {
-  const data = d.data() || {};
-  // support both models: array-of-uids OR map-of-counts
-  if (Array.isArray(data.unread)) {
-    return acc + (data.unread.includes(currentUserId) ? 1 : 0);
-  }
-  if (data.unread && typeof data.unread === "object") {
-    return acc + ((data.unread[currentUserId] || 0) > 0 ? 1 : 0);
-  }
-  return acc;
-}, 0);
-setUnreadMsgCount(count);
-
-      },
-      (err) => {
-        console.error("Unread messages listener (permission?)", err);
-        setUnreadMsgCount(0);
-      }
-    );
-  } catch (e) {
-    console.error("Unread messages listener error:", e);
-    setUnreadMsgCount(0);
-  }
-  return () => unsub && unsub();
-}, [currentUserId]);
-
+  // subscribe: unread messages count
+  useEffect(() => {
+    if (!currentUserId) return;
+    let unsub;
+    try {
+      const qy = query(
+        collection(db, "Messages"),
+        where("userIds", "array-contains", currentUserId)
+      );
+      unsub = onSnapshot(
+        qy,
+        (snap) => {
+          const count = snap.docs.reduce((acc, d) => {
+            const data = d.data() || {};
+            if (Array.isArray(data.unread)) {
+              return acc + (data.unread.includes(currentUserId) ? 1 : 0);
+            }
+            if (data.unread && typeof data.unread === "object") {
+              return acc + ((data.unread[currentUserId] || 0) > 0 ? 1 : 0);
+            }
+            return acc;
+          }, 0);
+          setUnreadMsgCount(count);
+        },
+        (err) => {
+          console.error("Unread messages listener (permission?)", err);
+          setUnreadMsgCount(0);
+        }
+      );
+    } catch (e) {
+      console.error("Unread messages listener error:", e);
+      setUnreadMsgCount(0);
+    }
+    return () => unsub && unsub();
+  }, [currentUserId]);
 
   // play sound on unread increase
   useEffect(() => {
@@ -251,9 +329,13 @@ setUnreadMsgCount(count);
     return name || me.email || "";
   }, [me]);
 
-  const onSearchKey = (e) => {
+  const onSearchKey = async (e) => {
     if (e.key === "Enter") {
-      handleSearch?.();
+      if (typeof handleSearch === "function") {
+        await handleSearch();
+      } else {
+        await runLocalSearch();
+      }
       setOpenSearch(true);
     } else if (e.key === "Escape") {
       setOpenSearch(false);
@@ -280,13 +362,10 @@ setUnreadMsgCount(count);
     try {
       setAcceptingId(reqObj.id);
 
-      // 1) Mark accepted in Firestore
       await updateDoc(doc(db, "FriendRequests", reqObj.id), { status: "accepted" });
 
-      // 2) Optimistically remove from local pending list (so it vanishes immediately)
       setPendingReqs((prev) => prev.filter((r) => r.id !== reqObj.id));
 
-      // 3) Create "friend_accept" notification for the sender
       try {
         const meSnap = await getDoc(doc(db, "Users", currentUserId));
         const meData = meSnap.exists() ? meSnap.data() : {};
@@ -296,8 +375,8 @@ setUnreadMsgCount(count);
           "Someone";
 
         await addDoc(collection(db, "Notifications"), {
-          recipientId: reqObj.fromId,       // sender gets notified
-          actorId: currentUserId,           // me (acceptor)
+          recipientId: reqObj.fromId,
+          actorId: currentUserId,
           actorFirstName: meData.firstName || "",
           actorLastName: meData.lastName || "",
           actorName,
@@ -344,6 +423,22 @@ setUnreadMsgCount(count);
     navigate(`/profile/${uid}`);
   };
 
+  // Prefer parent results if provided; else fall back to local
+  const raw =
+    (Array.isArray(searchResults) && searchResults.length > 0
+      ? searchResults
+      : localResults) || [];
+
+  // Hide deleted/disabled and de-dupe by id
+  const seen = new Set();
+  const combinedResults = raw.filter((u) => {
+    if (!u || !u.id) return false;
+    if (isUserDeletedOrHidden(u)) return false;
+    if (seen.has(u.id)) return false;
+    seen.add(u.id);
+    return true;
+  });
+
   return (
     <header
       className="nav-wrap"
@@ -377,6 +472,7 @@ setUnreadMsgCount(count);
             onChange={(e) => {
               effectiveSetSearchTerm(e.target.value);
               if (!openSearch) setOpenSearch(true);
+              // optional: runLocalSearch with a debounce if you want live results
             }}
             onKeyDown={onSearchKey}
             onFocus={() => setOpenSearch(true)}
@@ -385,8 +481,12 @@ setUnreadMsgCount(count);
           <button
             className="btn-search"
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              handleSearch?.();
+            onClick={async () => {
+              if (typeof handleSearch === "function") {
+                await handleSearch(); // parent-provided search
+              } else {
+                await runLocalSearch(); // local search (filters hidden accounts)
+              }
               setOpenSearch(true);
               inputRef.current?.focus();
             }}
@@ -397,10 +497,10 @@ setUnreadMsgCount(count);
 
         {openSearch && effectiveSearchTerm && (
           <div className="results" onMouseDown={(e) => e.preventDefault()}>
-            {searchResults.length === 0 ? (
+            {combinedResults.length === 0 ? (
               <div className="result empty">No results</div>
             ) : (
-              searchResults.map((u) => (
+              combinedResults.map((u) => (
                 <button
                   key={u.id}
                   className="result"
@@ -427,25 +527,23 @@ setUnreadMsgCount(count);
       {/* Right side */}
       <div className="right">
         <button
-  className="icon-btn"
-  title="Messages"
-  onClick={() => {
-    closeAllPopovers();
-    navigate("/messages");
-  }}
->
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path
-      d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
-      fill="currentColor"
-    />
-  </svg>
-
-  {/* 👇 Replace this block */}
-  {unreadMsgCount > 0 && <span className="badge-dot" aria-label="new messages" />}
-  {/* remove the numeric badge if you don’t want numbers */}
-</button>
-
+          className="icon-btn"
+          title="Messages"
+          onClick={() => {
+            closeAllPopovers();
+            navigate("/messages");
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"
+              fill="currentColor"
+            />
+          </svg>
+          {unreadMsgCount > 0 && (
+            <span className="badge-dot" aria-label="new messages" />
+          )}
+        </button>
 
         {/* Friends (pending requests dropdown) */}
         <div className="icon-pop">
@@ -477,11 +575,21 @@ setUnreadMsgCount(count);
               ) : (
                 pendingReqs.map((r) => (
                   <div key={r.id} className="row">
-                    <div className="row-main" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div
+                      className="row-main"
+                      style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                    >
                       <img
-                        src={miniUsers[r.fromId]?.photo || "https://i.imgur.com/qzsiOuh.png"}
+                        src={
+                          miniUsers[r.fromId]?.photo || "https://i.imgur.com/qzsiOuh.png"
+                        }
                         alt={miniUsers[r.fromId]?.name || "User"}
-                        style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }}
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: "50%",
+                          objectFit: "cover",
+                        }}
                       />
                       <div>
                         <div className="row-title">
@@ -493,7 +601,7 @@ setUnreadMsgCount(count);
                     <div className="row-actions">
                       <button
                         className="mini-btn approve"
-                        onClick={() => acceptFriend(r)}   // pass the whole request so we know fromId
+                        onClick={() => acceptFriend(r)}
                         disabled={acceptingId === r.id}
                       >
                         Accept
@@ -594,10 +702,7 @@ setUnreadMsgCount(count);
         </div>
 
         {/* Me */}
-        <div
-          className="me-dropdown"
-          onMouseLeave={() => setShowMenu(false)}
-        >
+        <div className="me-dropdown" onMouseLeave={() => setShowMenu(false)}>
           <div
             className="me"
             onMouseEnter={() => setShowMenu(true)}
@@ -606,10 +711,7 @@ setUnreadMsgCount(count);
             }}
           >
             <div className="me-img">
-              <img
-                src={me?.photo || "https://i.imgur.com/qzsiOuh.png"}
-                alt=""
-              />
+              <img src={me?.photo || "https://i.imgur.com/qzsiOuh.png"} alt="" />
             </div>
             <span className="me-name">{displayName || "Profile"}</span>
           </div>
@@ -619,8 +721,7 @@ setUnreadMsgCount(count);
               <button className="icon-btn logout-btn" onClick={doLogout}>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path
-                    d="M16 13v-2H7V8l-5 4 5 4v-3h9zm3-10H5c-1.1 0-2 .9-2 
-                       2v6h2V5h14v14H5v-6H3v6c0 1.1.9 2 2 
+                    d="M16 13v-2H7V8l-5 4 5 4v-3h9zm3-10H5c-1.1 0 0-2 .9-2-2v6h2V5h14v14H5v-6H3v6c0 1.1.9 2 2 
                        2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"
                     fill="currentColor"
                   />
