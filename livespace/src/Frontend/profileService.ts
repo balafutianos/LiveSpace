@@ -1,61 +1,41 @@
 // src/services/profileService.ts
-import { getDoc, doc, setDoc } from "firebase/firestore";
-import { db } from "./firebase"; // your Firebase init
+import { doc, getDoc, setDoc, deleteField } from "firebase/firestore";
+import { db } from "../Frontend/firebase";
 
-// Fetch profile for viewer (owner gets private merged in)
+type Visibility = "public" | "private";
+const FIELDS = ["phone", "phoneCountry", "phoneNumber", "sex", "birthday", "work", "city", "about", "email"] as const;
+type FieldName = typeof FIELDS[number];
+const isPrivate = (vis: Record<string, Visibility> | undefined, f: FieldName) =>
+  (vis?.[f] || "public") === "private";
+
+// Owner gets public+private; others only public
 export async function getProfileForViewer(uid: string, viewerUid?: string) {
-  const publicSnap = await getDoc(doc(db, "Users", uid));
-  const publicData = publicSnap.exists() ? publicSnap.data() : {};
-
+  const pub = await getDoc(doc(db, "Users", uid));
+  const publicData = pub.exists() ? pub.data() : {};
   if (viewerUid && viewerUid === uid) {
-    const privateSnap = await getDoc(doc(db, "Users", uid, "private", "profile"));
-    const privateData = privateSnap.exists() ? privateSnap.data() : {};
-    return { ...publicData, ...privateData };
+    const priv = await getDoc(doc(db, "Users", uid, "private", "profile"));
+    const privateData = priv.exists() ? priv.data() : {};
+    return { ...publicData, ...privateData, visibility: publicData.visibility || {} };
   }
-
   return publicData;
 }
 
-// Save profile, splitting into public/private docs
+// Split write + delete from the opposite doc
 export async function saveProfile(uid: string, form: any) {
-  const vis = form.visibility || {};
-  const isPrivate = (field: string) => (vis[field] || "public") === "private";
+  const vis: Record<string, Visibility> = form.visibility || {};
+  const publicUpdate: any = { visibility: vis };
+  const privateUpdate: any = {};
 
-  const publicData: any = {
-    firstName: form.firstName ?? null,
-    lastName:  form.lastName  ?? null,
-    avatarUrl: form.avatarUrl ?? null,
-    city:     !isPrivate("city") ? form.city ?? null : null,
-    about:    !isPrivate("about") ? form.about ?? null : null,
-    work:     !isPrivate("work") ? form.work ?? null : null,
-    sex:      !isPrivate("sex") ? form.sex ?? null : null,
-    birthday: !isPrivate("birthday") ? form.birthday ?? null : null,
-    email:    !isPrivate("email") ? form.email ?? null : null,
-    visibility: vis,
-  };
-
-  const privateData: any = {
-    phoneCountry: isPrivate("phone") ? form.phoneCountry ?? null : null,
-    phoneNumber:  isPrivate("phone") ? form.phoneNumber ?? null : null,
-    city:     isPrivate("city") ? form.city ?? null : null,
-    about:    isPrivate("about") ? form.about ?? null : null,
-    work:     isPrivate("work") ? form.work ?? null : null,
-    sex:      isPrivate("sex") ? form.sex ?? null : null,
-    birthday: isPrivate("birthday") ? form.birthday ?? null : null,
-    email:    isPrivate("email") ? form.email ?? null : null,
-  };
-
-  const prune = (obj: any) => {
-    const out: any = {};
-    Object.entries(obj).forEach(([k, v]) => {
-      if (v !== undefined && v !== null) out[k] = v;
-    });
-    return out;
-  };
-
-  const publicRef  = doc(db, "Users", uid);
-  const privateRef = doc(db, "Users", uid, "private", "profile");
-
-  await setDoc(publicRef, prune(publicData), { merge: true });
-  await setDoc(privateRef, prune(privateData), { merge: true });
+  for (const f of FIELDS) {
+    const v = form[f] ?? null;
+    if (isPrivate(vis, f)) {
+      privateUpdate[f] = v;
+      publicUpdate[f] = deleteField();
+    } else {
+      publicUpdate[f] = v;
+      privateUpdate[f] = deleteField();
+    }
+  }
+  await setDoc(doc(db, "Users", uid), publicUpdate, { merge: true });
+  await setDoc(doc(db, "Users", uid, "private", "profile"), privateUpdate, { merge: true });
 }
