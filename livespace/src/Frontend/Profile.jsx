@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, verifyBeforeUpdateEmail, reauthenticateWithCredential, EmailAuthProvider, reauthenticateWithPopup, GoogleAuthProvider } from "firebase/auth";
 import { auth, db, storage } from "./firebase";
 import "./Profile.css";
 
@@ -644,6 +644,40 @@ const saveEditPost = async (post) => {
   const handleSaveProfile = async () => {
   if (!auth.currentUser || !isOwnProfile) return;
   try {
+    // === Email change flow (verify-before-update) ===
+    try {
+      const currentAuthEmail = auth.currentUser?.email || "";
+      const newEmail = (profileForm.email || "").trim();
+      const emailChanged = newEmail && newEmail !== currentAuthEmail;
+      if (emailChanged) {
+        // Re-authenticate (password users or Google popup)
+        const isPasswordUser = auth.currentUser.providerData.some(p => p.providerId === "password");
+        if (isPasswordUser) {
+          const pwd = profileForm._reauthPassword;
+          if (!pwd) {
+            alert("Please enter your current password to change your email.");
+            return;
+          }
+          const cred = EmailAuthProvider.credential(currentAuthEmail, pwd);
+          await reauthenticateWithCredential(auth.currentUser, cred);
+        } else if (auth.currentUser.providerData.some(p => p.providerId === "google.com")) {
+          const provider = new GoogleAuthProvider();
+          await reauthenticateWithPopup(auth.currentUser, provider);
+        }
+        await verifyBeforeUpdateEmail(auth.currentUser, newEmail, {
+          url: window.location.origin + "/email-updated",
+          handleCodeInApp: false,
+        });
+        alert("We sent a verification link to your NEW email. Click it to confirm, then sign in again.");
+        window.__LS_VERIFY_EMAIL_SENT__ = true;
+      }
+    } catch (e) {
+      console.error("Email update failed:", e);
+      alert(e?.message || "Failed to initiate email change.");
+      return;
+    }
+    // === End email flow ===
+
     const uid = auth.currentUser.uid;
     const vis = profileForm.visibility || {};
     const publicUpdate = {};
@@ -660,6 +694,8 @@ const saveEditPost = async (post) => {
       about: profileForm.about ?? "",
       city: profileForm.city ?? "",
     };
+    delete form._reauthPassword;
+
 
     PRIV_FIELDS.forEach((f) => {
       const value = form[f] ?? null;
@@ -671,6 +707,13 @@ const saveEditPost = async (post) => {
         privateUpdate[f] = deleteField();
       }
     });
+
+    
+    // If verification pending, keep old email in Firestore
+    if (typeof window !== "undefined" && window.__LS_VERIFY_EMAIL_SENT__) {
+      form.email = auth.currentUser?.email || form.email || "";
+      try { delete window.__LS_VERIFY_EMAIL_SENT__; } catch {}
+    }
 
     const userRef = doc(db, "Users", uid);
     await setDoc(userRef, publicUpdate, { merge: true });

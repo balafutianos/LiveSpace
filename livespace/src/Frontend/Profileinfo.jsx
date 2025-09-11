@@ -1,6 +1,7 @@
 // src/components/ProfileInfo.jsx
 import React from "react";
 import Select, { components } from "react-select";
+import { auth } from "./firebase";
 
 /* ---------- Theme ---------- */
 const UI = {
@@ -656,6 +657,23 @@ export default function ProfileInfo({
               />
 
               <FieldRow label="Email" field="email" type="email" placeholder="you@example.com" />
+              {editing && (profileForm.email || "") !== (auth.currentUser?.email || "") && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ color: "#a6c9c2", fontWeight: 700, fontSize: 13 }}>Current Password (required to change email)</label>
+                  <input
+                    type="password"
+                    placeholder="Enter your current password"
+                    value={profileForm._reauthPassword || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, _reauthPassword: e.target.value })}
+                    style={{ width: "100%", height: 40, padding: "0 12px", borderRadius: 14, border: "1px solid #123547", background: "#0b2536", color: "#e6f7f4", outline: "none", marginTop: 6 }}
+                    autoComplete="current-password"
+                  />
+                  <small style={{ color: "#a6c9c2" }}>
+                    If you signed in with Google/Apple, a provider popup may ask you to confirm.
+                  </small>
+                </div>
+              )}
+
             </div>
           </div>
 
