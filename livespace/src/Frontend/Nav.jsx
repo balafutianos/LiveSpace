@@ -2,13 +2,14 @@ import React, { useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "./firebase";
 import { toast } from "react-toastify";
-import { Eye, EyeOff } from "lucide-react";          // 👈 add
+import { Eye, EyeOff } from "lucide-react";          
 import "./Signup.css";
+import { sendPasswordResetEmail } from "firebase/auth";
 
 function Nav() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);     // 👈 add
+  const [showPassword, setShowPassword] = useState(false);     
   const [loading, setLoading] = useState(false);
 
   // Field & general errors
@@ -64,6 +65,27 @@ function Nav() {
     }
   };
 
+const handleForgotPassword = async () => {
+  if (!loginEmail.trim()) {
+    toast.error("Enter your email address first.");
+    return;
+  }
+
+  try {
+    await sendPasswordResetEmail(auth, loginEmail.trim());
+    toast.info("Password reset email sent. Please check your inbox.");
+  } catch (error) {
+    if (error.code === "auth/user-not-found") {
+      toast.error("No account found with that email.");
+    } else if (error.code === "auth/invalid-email") {
+      toast.error("Invalid email format.");
+    } else {
+      toast.error("Could not send reset email. Try again.");
+    }
+  }
+};
+
+
   return (
     <nav className="navbar">
       <div className="navbar-container">
@@ -75,6 +97,35 @@ function Nav() {
               {errors.general}
             </div>
           )}
+
+<a
+  href="#"
+  className="forgot-password"
+  onClick={(e) => {
+    e.preventDefault(); // stop page refresh
+    if (!loginEmail.trim()) {
+      toast.error("Please enter your email address first.");
+      return;
+    }
+
+    sendPasswordResetEmail(auth, loginEmail.trim())
+      .then(() => {
+        toast.info("Password reset email sent. Please check your inbox.");
+      })
+      .catch((error) => {
+        if (error.code === "auth/user-not-found") {
+          toast.error("No account found with that email.");
+        } else if (error.code === "auth/invalid-email") {
+          toast.error("Invalid email format.");
+        } else {
+          toast.error("Could not send reset email. Try again.");
+        }
+      });
+  }}
+>
+  Forgot Password?
+</a>
+
 
           <div className="input-wrap">
             <input
@@ -140,6 +191,6 @@ function Nav() {
       </div>
     </nav>
   );
-}
 
+}
 export default Nav;

@@ -320,6 +320,17 @@ body{
   box-sizing: border-box;
 }
 
+.forgot-password {
+  color: #13C19A;        /* link color */
+  text-decoration: none; /* no underline by default */
+  cursor: pointer;
+}
+
+.forgot-password:hover {
+  text-decoration: underline; /* underline only on hover */
+}
+
+
 /* Eye button sits INSIDE the input, transparent */
 .toggle-visibility {
   position: absolute;
