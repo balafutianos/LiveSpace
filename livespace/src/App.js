@@ -155,9 +155,9 @@ export default function App() {
         position="top-center"
         autoClose={5000}          // normal auto-close
         newestOnTop
-        closeOnClick={false}      // don't rely on click
-        draggable={false}
-        pauseOnHover={false}
+        closeOnClick={true}      // don't rely on click
+        draggable={true}
+        pauseOnHover={true}
         pauseOnFocusLoss={false}  // don't pause when tab/window loses focus
         style={{ zIndex: 2147483647 }}
         toastStyle={{ pointerEvents: "auto" }}
