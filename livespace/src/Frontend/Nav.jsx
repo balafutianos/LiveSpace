@@ -1,90 +1,58 @@
-import React, { useState } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import React, { useState, useRef } from "react";
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "./firebase";
 import { toast } from "react-toastify";
-import { Eye, EyeOff } from "lucide-react";          
+import { Eye, EyeOff } from "lucide-react";
 import "./Signup.css";
-import { sendPasswordResetEmail } from "firebase/auth";
 
 function Nav() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);     
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const emailRef = useRef(null);
 
-  // Field & general errors
-  const [errors, setErrors] = useState({
-    email: "",
-    password: "",
-    general: "",
-  });
-
-  const getFriendlyMessage = (code) => {
-    switch (code) {
-      case "auth/invalid-email":
-        return { email: "Please enter a valid email address." };
-      case "auth/user-not-found":
-      case "auth/wrong-password":
-      case "auth/invalid-credential":
-        return { general: "Email or password is incorrect." };
-      case "auth/too-many-requests":
-        return { general: "Too many attempts. Please try again later or reset your password." };
-      case "auth/network-request-failed":
-        return { general: "Network error. Check your connection and try again." };
-      default:
-        return { general: "Something went wrong. Please try again." };
-    }
-  };
+  const [errors, setErrors] = useState({ email: "", password: "", general: "" });
 
   const handleLogin = async (e) => {
     e.preventDefault();
-
     setErrors({ email: "", password: "", general: "" });
 
-    const nextErrors = {};
-    if (!loginEmail) nextErrors.email = "Email is required.";
-    if (!loginPassword) nextErrors.password = "Password is required.";
-    if (Object.keys(nextErrors).length) {
-      setErrors((prev) => ({ ...prev, ...nextErrors }));
+    const next = {};
+    if (!loginEmail.trim()) next.email = "Email is required.";
+    if (!loginPassword) next.password = "Password is required.";
+    if (Object.keys(next).length) {
+      setErrors((p) => ({ ...p, ...next }));
+      if (next.email && emailRef.current) emailRef.current.focus();
       return;
     }
 
     try {
       setLoading(true);
-      await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
       toast.success("User logged in successfully", { position: "top-center" });
       window.location.href = "/profile";
     } catch (error) {
-      const friendly = getFriendlyMessage(error.code);
-      setErrors((prev) => ({ ...prev, ...friendly }));
-      toast.error(friendly.general || friendly.email || friendly.password || "Login failed", {
-        position: "bottom-center",
-      });
+      toast.error("Login failed", { position: "bottom-center" });
     } finally {
       setLoading(false);
     }
   };
 
-const handleForgotPassword = async () => {
-  if (!loginEmail.trim()) {
-    toast.error("Enter your email address first.");
-    return;
-  }
-
-  try {
-    await sendPasswordResetEmail(auth, loginEmail.trim());
-    toast.info("Password reset email sent. Please check your inbox.");
-  } catch (error) {
-    if (error.code === "auth/user-not-found") {
-      toast.error("No account found with that email.");
-    } else if (error.code === "auth/invalid-email") {
-      toast.error("Invalid email format.");
-    } else {
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!loginEmail.trim()) {
+      setErrors((p) => ({ ...p, email: "Please enter your email address first." }));
+      if (emailRef.current) emailRef.current.focus();
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, loginEmail.trim());
+      toast.info("Password reset email sent. Please check your inbox.");
+    } catch (error) {
       toast.error("Could not send reset email. Try again.");
     }
-  }
-};
-
+  };
 
   return (
     <nav className="navbar">
@@ -98,44 +66,16 @@ const handleForgotPassword = async () => {
             </div>
           )}
 
-<a
-  href="#"
-  className="forgot-password"
-  onClick={(e) => {
-    e.preventDefault(); // stop page refresh
-    if (!loginEmail.trim()) {
-      toast.error("Please enter your email address first.");
-      return;
-    }
-
-    sendPasswordResetEmail(auth, loginEmail.trim())
-      .then(() => {
-        toast.info("Password reset email sent. Please check your inbox.");
-      })
-      .catch((error) => {
-        if (error.code === "auth/user-not-found") {
-          toast.error("No account found with that email.");
-        } else if (error.code === "auth/invalid-email") {
-          toast.error("Invalid email format.");
-        } else {
-          toast.error("Could not send reset email. Try again.");
-        }
-      });
-  }}
->
-  Forgot Password?
-</a>
-
-
           <div className="input-wrap">
             <input
+              ref={emailRef}
               type="email"
               placeholder="Email address"
               value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)}
               required
               className={errors.email ? "is-error" : ""}
-              aria-invalid={Boolean(errors.email)}
+              aria-invalid={!!errors.email}
               aria-describedby={errors.email ? "login-email-error" : undefined}
               autoComplete="email"
               inputMode="email"
@@ -147,21 +87,19 @@ const handleForgotPassword = async () => {
             )}
           </div>
 
-          {/* Password with eye inside the field */}
           <div className="input-wrap password-wrap">
             <div className="control">
               <input
-                type={showPassword ? "text" : "password"}     // 👈 single type attribute
+                type={showPassword ? "text" : "password"}
                 placeholder="Password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
                 required
                 className={`input ${errors.password ? "is-error" : ""}`}
-                aria-invalid={Boolean(errors.password)}
+                aria-invalid={!!errors.password}
                 aria-describedby={errors.password ? "login-password-error" : undefined}
                 autoComplete="current-password"
               />
-
               <button
                 type="button"
                 className="toggle-visibility"
@@ -171,7 +109,6 @@ const handleForgotPassword = async () => {
                 {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
-
             {errors.password && (
               <small id="login-password-error" className="field-error">
                 {errors.password}
@@ -179,18 +116,18 @@ const handleForgotPassword = async () => {
             )}
           </div>
 
-          <button
-            type="submit"
-            className="login-button"
-            disabled={loading}
-            aria-busy={loading}
-          >
+          <button type="submit" className="login-button" disabled={loading} aria-busy={loading}>
             {loading ? "Logging in…" : "Log In"}
           </button>
         </form>
+
+        {/* Anchor outside the form */}
+        <a href="#" className="forgot-password" onClick={handleForgotPassword}>
+          Forgot Password?
+        </a>
       </div>
     </nav>
   );
-
 }
-export default Nav;
+
+export default Nav;  // <-- default export

@@ -388,3 +388,13 @@ body{
   outline: 2px solid var(--accent, #22d3ee);
   outline-offset: 2px;
 }
+.forgot-password {
+  display: inline-block;
+  margin-top: 10px;
+  color: #0b63ff;
+  text-decoration: none;
+  cursor: pointer;
+}
+.forgot-password:hover {
+  text-decoration: underline;
+}
