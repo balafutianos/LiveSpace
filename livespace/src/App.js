@@ -1,12 +1,22 @@
 // App.js
 import React, { useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+  Outlet,
+} from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { ToastContainer, toast } from "react-toastify";
 import { collection, getDocs, limit, query } from "firebase/firestore";
 
 import { auth, db } from "./Frontend/firebase";
 import Navbar from "./Frontend/Navbar";
+import OnlineFriendSidebar from "./Frontend/OnlineFriendSidebar";
+import { usePresence } from "./Frontend/presence";
+import { ChatDockProvider } from "./Frontend/ChatDockContext";
+import ChatDock from "./Frontend/ChatDock";
 
 import Signup from "./Frontend/Signup";
 import Login from "./Frontend/Login";
@@ -17,14 +27,18 @@ import "react-toastify/dist/ReactToastify.css";
 
 /* ---------- Guard: require signed-in + verified email ---------- */
 function RequireVerified({ user, children }) {
-  if (user === undefined) return null;            // still loading
+  if (user === undefined) return null; // still loading
   if (!user) return <Navigate to="/login" replace />;
   if (!user.emailVerified) return <Navigate to="/verify" replace />;
   return children;
 }
 
-function AppShell({ user }) {
-  // --- Search state/logic passed to Navbar ---
+/* ---------- Layout used by all authenticated pages ---------- */
+function AuthedLayout({ user }) {
+  // Publish my presence heartbeat while logged in
+  usePresence(user?.uid || null);
+
+  // Search state/logic for Navbar
   const [searchTerm, setSearchTerm] = React.useState("");
   const [searchResults, setSearchResults] = React.useState([]);
 
@@ -61,13 +75,15 @@ function AppShell({ user }) {
     }
   }, [searchTerm]);
 
-  // --- Hide navbar on signup/login/verify ---
-  const location = useLocation();
-  const hideNavbar = ["/", "/login", "/verify"].includes(location.pathname);
-
   return (
-    <>
-      {!hideNavbar && user && user.emailVerified && (
+    <ChatDockProvider>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "56px 1fr",
+          height: "100vh",
+        }}
+      >
         <Navbar
           currentUserId={user.uid}
           searchTerm={searchTerm}
@@ -75,52 +91,24 @@ function AppShell({ user }) {
           handleSearch={handleSearch}
           searchResults={searchResults}
         />
-      )}
 
-      <Routes>
-        {/* Public */}
-        <Route path="/" element={<Signup />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/verify" element={<VerifyEmail />} />
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 280px",
+            height: "100%",
+          }}
+        >
+          <main style={{ overflow: "auto" }}>
+            <Outlet />
+          </main>
+          <OnlineFriendSidebar />
+        </div>
 
-        {/* Protected (must be verified) */}
-        <Route
-          path="/profile"
-          element={
-            <RequireVerified user={user}>
-              <Profile />
-            </RequireVerified>
-          }
-        />
-        <Route
-          path="/profile/:uid"
-          element={
-            <RequireVerified user={user}>
-              <Profile />
-            </RequireVerified>
-          }
-        />
-        <Route
-          path="/messages"
-          element={
-            <RequireVerified user={user}>
-              <Messages />
-            </RequireVerified>
-          }
-        />
-        <Route
-          path="/messages/:uid"
-          element={
-            <RequireVerified user={user}>
-              <Messages />
-            </RequireVerified>
-          }
-        />
-
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </>
+        {/* Floating chat dock anchored bottom-right */}
+        <ChatDock currentUserId={user.uid} />
+      </div>
+    </ChatDockProvider>
   );
 }
 
@@ -138,7 +126,6 @@ export default function App() {
       if (payload.status === "added") {
         const id = payload.id;
         setTimeout(() => {
-          // only dismiss if it still exists (not already closed)
           toast.dismiss(id);
         }, 5000);
       }
@@ -150,15 +137,42 @@ export default function App() {
 
   return (
     <Router>
-      <AppShell user={user} />
+      <Routes>
+        {/* Public (no sidebar) */}
+        <Route path="/" element={<Signup />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/verify" element={<VerifyEmail />} />
+
+        {/* Authenticated (Navbar + Sidebar + Dock on every page) */}
+        <Route
+          element={
+            <RequireVerified user={user}>
+              <AuthedLayout user={user} />
+            </RequireVerified>
+          }
+        >
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/profile/:uid" element={<Profile />} />
+          <Route path="/messages" element={<Messages />} />
+          <Route path="/messages/:uid" element={<Messages />} />
+          {/* Add more authed routes here */}
+        </Route>
+
+        {/* Fallback */}
+        <Route
+          path="*"
+          element={<Navigate to={user ? "/profile" : "/login"} replace />}
+        />
+      </Routes>
+
       <ToastContainer
         position="top-center"
-        autoClose={5000}          // normal auto-close
+        autoClose={5000}
         newestOnTop
-        closeOnClick={true}      // don't rely on click
-        draggable={true}
-        pauseOnHover={true}
-        pauseOnFocusLoss={false}  // don't pause when tab/window loses focus
+        closeOnClick
+        draggable
+        pauseOnHover
+        pauseOnFocusLoss={false}
         style={{ zIndex: 2147483647 }}
         toastStyle={{ pointerEvents: "auto" }}
       />
