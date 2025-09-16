@@ -1,8 +1,8 @@
-// App.jsx
+// App.js
 import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { ToastContainer } from "react-toastify";
+import { ToastContainer, toast } from "react-toastify";
 import { collection, getDocs, limit, query } from "firebase/firestore";
 
 import { auth, db } from "./Frontend/firebase";
@@ -13,6 +13,7 @@ import Login from "./Frontend/Login";
 import VerifyEmail from "./Frontend/VerifyEmail";
 import Profile from "./Frontend/Profile";
 import Messages from "./Frontend/Messages";
+import "react-toastify/dist/ReactToastify.css";
 
 /* ---------- Guard: require signed-in + verified email ---------- */
 function RequireVerified({ user, children }) {
@@ -125,8 +126,23 @@ function AppShell({ user }) {
 
 export default function App() {
   const [user, setUser] = useState(undefined); // undefined=loading
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u ?? null));
+    return () => unsub();
+  }, []);
+
+  // 🔒 Fail-safe: dismiss every toast 5s after it’s added
+  useEffect(() => {
+    const unsub = toast.onChange((payload) => {
+      if (payload.status === "added") {
+        const id = payload.id;
+        setTimeout(() => {
+          // only dismiss if it still exists (not already closed)
+          toast.dismiss(id);
+        }, 5000);
+      }
+    });
     return () => unsub();
   }, []);
 
@@ -135,7 +151,17 @@ export default function App() {
   return (
     <Router>
       <AppShell user={user} />
-      <ToastContainer />
+      <ToastContainer
+        position="top-center"
+        autoClose={5000}          // normal auto-close
+        newestOnTop
+        closeOnClick={true}      // don't rely on click
+        draggable={true}
+        pauseOnHover={true}
+        pauseOnFocusLoss={false}  // don't pause when tab/window loses focus
+        style={{ zIndex: 2147483647 }}
+        toastStyle={{ pointerEvents: "auto" }}
+      />
     </Router>
   );
 }

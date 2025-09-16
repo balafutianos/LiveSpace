@@ -320,6 +320,17 @@ body{
   box-sizing: border-box;
 }
 
+.forgot-password {
+  color: #13C19A;        /* link color */
+  text-decoration: none; /* no underline by default */
+  cursor: pointer;
+}
+
+.forgot-password:hover {
+  text-decoration: underline; /* underline only on hover */
+}
+
+
 /* Eye button sits INSIDE the input, transparent */
 .toggle-visibility {
   position: absolute;
@@ -376,4 +387,60 @@ body{
 .toggle-visibility:focus-visible {
   outline: 2px solid var(--accent, #22d3ee);
   outline-offset: 2px;
+}
+.forgot-password {
+  display: inline-block;
+  margin-top: 10px;
+  color: #0b63ff;
+  text-decoration: none;
+  cursor: pointer;
+}
+.forgot-password:hover {
+  text-decoration: underline;
+}
+/* BUGFIX: rogue giant black circle on Forgot Password */
+body > svg {
+  position: static !important;
+  width: auto !important;
+  height: auto !important;
+  display: inline !important;
+  border-radius: 0 !important;
+  background: none !important;
+}
+
+/* keep toast icons small */
+.Toastify__toast svg {
+  width: 20px !important;
+  height: 20px !important;
+  flex: 0 0 auto;
+}
+
+/* Keep the toast above everything and clickable */
+.Toastify__toast-container { z-index: 2147483647 !important; }
+.Toastify__toast,
+.Toastify__toast * { pointer-events: auto !important; }
+
+/* Make sure the actual button gets the click, not its child icon */
+.Toastify__close-button { pointer-events: auto !important; }
+.Toastify__close-button > * { pointer-events: none !important; }
+/* make sure toast and the X can actually receive pointer events */
+.Toastify__toast-container { z-index: 2147483647 !important; }
+.Toastify__toast,
+.Toastify__toast * { pointer-events: auto !important; }
+
+/* the close button should get the pointer, not its icon */
+.Toastify__close-button { pointer-events: auto !important; }
+.Toastify__close-button > * { pointer-events: none !important; }
+
+/* optional, nicer hit area */
+.toast-close {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 6px;
+  position: absolute;
+  right: 6px;
+  top: 6px;
 }

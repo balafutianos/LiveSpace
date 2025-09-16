@@ -11,3 +11,24 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+/* Keep the toast above everything */
+.Toastify__toast-container { z-index: 999999 !important; }
+
+/* Make absolutely sure clicks reach the close button */
+.Toastify__toast,
+.Toastify__toast * {
+  pointer-events: auto !important;
+}
+
+/* Position + ensure the close button itself gets the click
+   (its child SVG will *not* steal the click) */
+.Toastify__close-button {
+  position: absolute !important;
+  right: 6px !important;
+  top: 6px !important;
+  pointer-events: auto !important;
+}
+
+.Toastify__close-button > * {
+  pointer-events: none !important;   /* let the button receive the click */
+}
