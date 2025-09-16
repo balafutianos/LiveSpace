@@ -189,3 +189,14 @@
 .badge-dot.pulse{
   animation: pulseDot 1.25s ease-in-out infinite;
 }
+/* ===== Mobile navbar fixes ===== */
+@media (max-width: 768px){
+  .nav-wrap{
+    flex-wrap: wrap;
+    height: auto;
+    padding: 10px;
+    gap: 10px;
+  }
+  .search-area{ width: 100%; order: 3; }
+  .brand{ flex: 1; text-align: center; }
+}

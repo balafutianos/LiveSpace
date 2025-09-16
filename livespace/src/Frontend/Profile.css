@@ -686,3 +686,191 @@ img[loading="lazy"]{ contain: paint; }
     gap: 8px;
   }
 }
+/* ===== Global Mobile Fixes (merged) ===== */
+@media (max-width: 1024px){
+  html, body, #root { width: 100%; max-width: 100%; overflow-x: hidden; }
+
+  /* reset fixed widths */
+  [style*="width:"]:not(svg):not(canvas){
+    max-width:100% !important;
+    width:auto !important;
+  }
+
+  /* common containers full width */
+  .container, .wrapper, .content, .page, .feed, .profile, .profile-page,
+  .profile-wrapper, .profile-container, .main, .main-col, .left-col, .right-col,
+  .sidebar, [class*="sidebar"], [class*="column"], [class*="layout"],
+  [class*="grid"], [class*="container"]{
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* force one column on grids */
+  .grid, .row, .layout, .profile-layout,
+  [class*="grid"], [class*="layout"]{
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  /* cards & panels full width */
+  .card, .panel, .box, .tile, [class*="card"], [class*="panel"]{
+    width: 100% !important;
+  }
+
+  /* images & media scale */
+  img, video, canvas{ max-width: 100% !important; height: auto !important; }
+
+  /* tables scroll instead of overflow */
+  table{ display: block; width: 100% !important; overflow-x: auto; }
+
+  /* form inputs stretch */
+  input, select, textarea, button{
+    max-width: 100% !important;
+  }
+}
+
+@media (max-width: 420px){
+  body{ font-size: 15px; }
+  h1{ font-size: 1.35rem; }
+  h2{ font-size: 1.15rem; }
+  .btn, button{ padding: 10px 14px; }
+}
+/* ===== Mobile layout (targeted, safe) ===== */
+@media (max-width: 768px){
+  /* stack the three columns */
+  .page-grid{
+    display: block !important;
+  }
+  .col-left,
+  .col-middle,
+  .col-right{
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 0 18px 0 !important;
+  }
+
+  /* disable bleed/clip effects that might hide content */
+  .col-left::after{ display:none !important; }
+  .col-middle::before{ display:none !important; }
+  .col-right{ clip-path: none !important; overflow: visible !important; }
+
+  /* keep cards readable on phones */
+  .card{ border-radius: 14px; }
+  .card-h, .card-b{ padding: 14px 16px; }
+
+  /* photos grid: responsive columns only */
+  .photos-grid{ 
+    display: grid;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+  }
+}
+
+/* very small phones */
+@media (max-width: 420px){
+  .photos-grid{ grid-template-columns: 1fr !important; }
+}
+/* === FB-style friends grid === */
+.friends-grid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)); /* like your screenshot */
+  gap: 8px;
+}
+
+.friend-card{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.friend-img{
+  width: 100%;
+  aspect-ratio: 1 / 1;      /* perfect square */
+  object-fit: cover;
+  border-radius: 8px;
+  background: #1e2b34;      /* placeholder bg */
+  display: block;
+}
+
+.friend-name{
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;     /* allow up to 2 lines */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.friend-mutuals{
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.2;
+}
+
+/* Hover touch-up (optional) */
+.friend-card:hover .friend-img{ transform: scale(1.02); transition: transform .15s ease; }
+
+/* Breakpoints */
+@media (min-width: 1100px){
+  .friends-grid{ grid-template-columns: repeat(4, 1fr); }  /* wider screens */
+}
+@media (max-width: 640px){
+  .friends-grid{ grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 420px){
+  .friends-grid{ grid-template-columns: repeat(2, 1fr); }
+}
+/* === FB-sized friend tiles (fixed width) === */
+:root{
+  --friend-tile: 112px;   /* base size */
+}
+
+/* lock each tile to a fixed square and auto-fill more columns */
+.col-middle .friends-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--friend-tile), var(--friend-tile))) !important;
+  gap: 8px;
+  justify-content: start;   /* leave extra space on the right, like FB */
+}
+
+.col-middle .friend-card{
+  width: var(--friend-tile);
+}
+
+.col-middle .friend-img{
+  width: var(--friend-tile);
+  height: var(--friend-tile);
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+/* titles under each tile */
+.col-middle .friend-name{
+  font-size: 13px;
+  line-height: 1.2;
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* mutual-friends line (rename if your class differs) */
+.col-middle .friend-mutuals{
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* tweak sizes per breakpoint */
+@media (min-width: 1280px){
+  :root{ --friend-tile: 120px; }   /* large desktop */
+}
+@media (max-width: 768px){
+  :root{ --friend-tile: 104px; }   /* tablets/phones */
+}
+@media (max-width: 420px){
+  :root{ --friend-tile: 96px; }    /* tiny phones */
+}
