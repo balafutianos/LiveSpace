@@ -17,7 +17,9 @@ import OnlineFriendSidebar from "./Frontend/OnlineFriendSidebar";
 import { usePresence } from "./Frontend/presence";
 import { ChatDockProvider } from "./Frontend/ChatDockContext";
 import ChatDock from "./Frontend/ChatDock";
+import FeedSidebar from "./Frontend/FeedSidebar";
 
+import Feed from "./Frontend/Feed";
 import Signup from "./Frontend/Signup";
 import Login from "./Frontend/Login";
 import VerifyEmail from "./Frontend/VerifyEmail";
@@ -92,16 +94,20 @@ function AuthedLayout({ user }) {
           searchResults={searchResults}
         />
 
+        {/* Three-column authed layout: left feed sidebar · main · right contacts */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 280px",
+            gridTemplateColumns: "240px 1fr 280px",
             height: "100%",
           }}
         >
+          <FeedSidebar currentUserId={user.uid} />
+
           <main style={{ overflow: "auto" }}>
             <Outlet />
           </main>
+
           <OnlineFriendSidebar />
         </div>
 
@@ -138,12 +144,12 @@ export default function App() {
   return (
     <Router>
       <Routes>
-        {/* Public (no sidebar) */}
+        {/* Public (no sidebars) */}
         <Route path="/" element={<Signup />} />
         <Route path="/login" element={<Login />} />
         <Route path="/verify" element={<VerifyEmail />} />
 
-        {/* Authenticated (Navbar + Sidebar + Dock on every page) */}
+        {/* Authenticated (Navbar + FeedSidebar + OnlineFriendSidebar + ChatDock) */}
         <Route
           element={
             <RequireVerified user={user}>
@@ -151,17 +157,18 @@ export default function App() {
             </RequireVerified>
           }
         >
+          <Route path="/feed" element={<Feed />} />
+          <Route index element={<Feed />} /> {/* default authed page */}
           <Route path="/profile" element={<Profile />} />
           <Route path="/profile/:uid" element={<Profile />} />
           <Route path="/messages" element={<Messages />} />
           <Route path="/messages/:uid" element={<Messages />} />
-          {/* Add more authed routes here */}
         </Route>
 
         {/* Fallback */}
         <Route
           path="*"
-          element={<Navigate to={user ? "/profile" : "/login"} replace />}
+          element={<Navigate to={user ? "/feed" : "/login"} replace />}
         />
       </Routes>
 

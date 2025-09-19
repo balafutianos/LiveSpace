@@ -12,7 +12,7 @@ export default function ChatDock({ currentUserId }) {
         position: "fixed",
         right: 12,
         bottom: 12,
-        display: "flex",
+        display: "fixed",
         gap: 10,
         zIndex: 1000,
       }}

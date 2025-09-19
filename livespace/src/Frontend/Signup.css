@@ -12,9 +12,9 @@
   --ink:   #0F2530;
   --muted: #5D7482;
 
-  --surface: #FFFFFF;
-  --surface-soft: #F7FBF9;
-  --border: #D9F2EA;
+  --surface: #0F1A1F;
+  --surface-soft: #0C161A;
+  --border: #0FB386;
 
   --radius-s: 10px;
   --radius-m: 14px;
@@ -151,6 +151,7 @@ body{
   background: var(--surface-soft);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.8), var(--shadow-1);
   transition: border-color .15s ease, box-shadow .15s ease;
+  color: #cce5dc;
 }
 
 .form-group input:focus-visible {
