@@ -37,19 +37,14 @@ function RequireVerified({ user, children }) {
 
 /* ---------- Layout used by all authenticated pages ---------- */
 function AuthedLayout({ user }) {
-  // Publish my presence heartbeat while logged in
   usePresence(user?.uid || null);
 
-  // Search state/logic for Navbar
   const [searchTerm, setSearchTerm] = React.useState("");
   const [searchResults, setSearchResults] = React.useState([]);
 
   const handleSearch = React.useCallback(async () => {
     const term = searchTerm.trim().toLowerCase();
-    if (!term) {
-      setSearchResults([]);
-      return;
-    }
+    if (!term) return setSearchResults([]);
 
     try {
       const q = query(collection(db, "Users"), limit(50));
@@ -79,13 +74,7 @@ function AuthedLayout({ user }) {
 
   return (
     <ChatDockProvider>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateRows: "56px 1fr",
-          height: "100vh",
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateRows: "56px 1fr", height: "100vh" }}>
         <Navbar
           currentUserId={user.uid}
           searchTerm={searchTerm}
@@ -94,24 +83,14 @@ function AuthedLayout({ user }) {
           searchResults={searchResults}
         />
 
-        {/* Three-column authed layout: left feed sidebar · main · right contacts */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "240px 1fr 280px",
-            height: "100%",
-          }}
-        >
+        <div style={{ display: "grid", gridTemplateColumns: "240px 1fr 280px", height: "100%" }}>
           <FeedSidebar currentUserId={user.uid} />
-
           <main style={{ overflow: "auto" }}>
             <Outlet />
           </main>
-
           <OnlineFriendSidebar />
         </div>
 
-        {/* Floating chat dock anchored bottom-right */}
         <ChatDock currentUserId={user.uid} />
       </div>
     </ChatDockProvider>
@@ -119,21 +98,18 @@ function AuthedLayout({ user }) {
 }
 
 export default function App() {
-  const [user, setUser] = useState(undefined); // undefined=loading
+  const [user, setUser] = useState(undefined);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUser(u ?? null));
     return () => unsub();
   }, []);
 
-  // 🔒 Fail-safe: dismiss every toast 5s after it’s added
   useEffect(() => {
     const unsub = toast.onChange((payload) => {
       if (payload.status === "added") {
         const id = payload.id;
-        setTimeout(() => {
-          toast.dismiss(id);
-        }, 5000);
+        setTimeout(() => toast.dismiss(id), 5000);
       }
     });
     return () => unsub();
@@ -144,12 +120,12 @@ export default function App() {
   return (
     <Router>
       <Routes>
-        {/* Public (no sidebars) */}
+        {/* Public routes (default = Signup) */}
         <Route path="/" element={<Signup />} />
         <Route path="/login" element={<Login />} />
         <Route path="/verify" element={<VerifyEmail />} />
 
-        {/* Authenticated (Navbar + FeedSidebar + OnlineFriendSidebar + ChatDock) */}
+        {/* Authenticated section */}
         <Route
           element={
             <RequireVerified user={user}>
@@ -158,7 +134,6 @@ export default function App() {
           }
         >
           <Route path="/feed" element={<Feed />} />
-          <Route index element={<Feed />} /> {/* default authed page */}
           <Route path="/profile" element={<Profile />} />
           <Route path="/profile/:uid" element={<Profile />} />
           <Route path="/messages" element={<Messages />} />
@@ -168,7 +143,7 @@ export default function App() {
         {/* Fallback */}
         <Route
           path="*"
-          element={<Navigate to={user ? "/feed" : "/login"} replace />}
+          element={<Navigate to={user ? "/feed" : "/"} replace />}
         />
       </Routes>
 
