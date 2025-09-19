@@ -1,0 +1,114 @@
+/* === FriendRequests.css === */
+.fr-page {
+  padding: 16px;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.fr-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.fr-empty {
+  font-size: 15px;
+  color: #666;
+  padding: 20px;
+  text-align: center;
+  background: #fafafa;
+  border-radius: 8px;
+}
+
+.fr-section {
+  margin-bottom: 28px;
+}
+
+.fr-h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.fr-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fr-row {
+  display: flex;
+  align-items: center;
+  padding: 12px 8px;
+  border-bottom: 1px solid #eee;
+  gap: 12px;
+}
+
+.fr-row:last-child {
+  border-bottom: none;
+}
+
+.fr-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.fr-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.fr-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: #111;
+}
+
+.fr-sub {
+  font-size: 13px;
+  color: #666;
+  margin-top: 2px;
+}
+
+.fr-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Buttons */
+.btn {
+  font-size: 14px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+
+.btn-ghost {
+  background: #f3f4f6;
+  border: none;
+  color: #111;
+}
+
+.btn-ghost:hover {
+  background: #e5e7eb;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Optional: for consistency with sidebar dot */
+.ls-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  margin-left: 6px;
+  display: inline-block;
+}

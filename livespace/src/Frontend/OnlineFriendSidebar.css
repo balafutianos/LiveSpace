@@ -1,0 +1,61 @@
+/* make the whole right panel sticky */
+.ofs-panel {
+  width: 280px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-left: 1px solid rgba(255,255,255,0.07);
+
+  /* 🔽 stick under the 56px navbar */
+  position: -webkit-sticky;
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  align-self: start;
+
+  overflow-y: auto;     /* its own scroll */
+  /* keep your existing padding if you had any */
+}
+
+/* keep your existing header/rows styles unchanged */
+.ofs-header {
+  position: sticky; top: 0;
+  background: rgba(15, 23, 42, 0.9);
+  backdrop-filter: blur(4px);
+  padding: 10px 12px;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.ofs-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  background: transparent; border: 0; color: inherit;
+  padding: 8px 12px; cursor: pointer;
+}
+.ofs-row:hover { background: rgba(255,255,255,0.05); }
+.ofs-avatar {
+  width: 36px; height: 36px; border-radius: 9999px; object-fit: cover;
+  border: 1px solid rgba(255,255,255,0.15); background: #0b1220;
+}
+.ofs-main { min-width: 0; flex: 1; }
+.ofs-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ofs-sub { font-size: 12px; opacity: .7; }
+.ofs-dot {
+  width: 10px; height: 10px; border-radius: 9999px;
+  border: 2px solid #0f172a;
+}
+.ofs-wrap {
+  width: 280px;
+  background: #0b1220;
+  color: #e2e8f0;
+  border-left: 1px solid rgba(255,255,255,0.07);
+
+  position: -webkit-sticky;
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  align-self: start;
+
+  padding: 10px 8px;
+  overflow-y: auto;
+}

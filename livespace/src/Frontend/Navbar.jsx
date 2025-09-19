@@ -451,10 +451,10 @@ export default function Navbar({
         className="brand"
         onClick={() => {
           closeAllPopovers();
-          navigate("/");
+          navigate("/feed");
         }}
       >
-        <span className="brand-mark">LivespaceZone</span>
+        <span className="brand-mark">Livespace</span>
       </div>
 
       {/* Search Center */}
@@ -525,6 +525,22 @@ export default function Navbar({
       </div>
 
       {/* Right side */}
+      <button
+  className="icon-btn"
+  title="Feed"
+  onClick={() => {
+    closeAllPopovers();
+    navigate("/feed");
+  }}
+>
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"
+      fill="currentColor"
+    />
+  </svg>
+</button>
+
       <div className="right">
         <button
           className="icon-btn"
