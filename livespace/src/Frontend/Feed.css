@@ -1,0 +1,19 @@
+/* src/Frontend/Feed.css */
+.feed-wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
+.card { background: var(--panel-2, #0f1b25); border-radius: 12px; padding: 12px; border: 1px solid var(--line,#1f2a36); }
+.composer textarea { width: 100%; resize: vertical; background: transparent; color: #fff; border: 1px solid var(--line,#253645); border-radius: 8px; padding: 10px; }
+.composer-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+.feed-card { margin-top: 16px; }
+.feed-hdr { display:flex; align-items:center; gap:10px; }
+.feed-avatar { width:36px; height:36px; border-radius:50%; object-fit:cover; }
+.feed-hnames { flex:1; }
+.feed-author { font-weight:700; }
+.feed-date { font-size:12px; opacity:.8; }
+.you-badge { margin-left:8px; font-size:12px; opacity:.7; }
+.feed-own-actions { display:flex; gap:6px; }
+.mini-btn { padding:6px 10px; border:1px solid var(--line,#2b3a49); border-radius:8px; background:transparent; color:#fff; }
+.mini-btn.danger { color: salmon; border-color:#5a2a2a; }
+.feed-text { margin: 10px 0; white-space: pre-wrap; }
+.feed-image { width:100%; max-height: 480px; object-fit: cover; border-radius:10px; border:1px solid var(--line,#233142); }
+.row.gap { display:flex; gap:8px; align-items:center; }
+.mt-8 { margin-top:8px; }

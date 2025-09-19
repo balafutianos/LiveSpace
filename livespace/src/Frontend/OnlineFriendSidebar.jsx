@@ -25,12 +25,12 @@ function nameFromUser(u = {}) {
     u.firstName ?? u.firstname ?? u.givenName ?? u.given_name ?? "";
   const last = u.lastName ?? u.lastname ?? u.familyName ?? u.family_name ?? "";
   const full = `${first} ${last}`.trim();
-  return full || u.fullName || u.displayName || u.name || "Unknown";
+  return full || u.fullName || u.displayName || u.name || (u.email?.split?.("@")?.[0] ?? "Unknown");
 }
 
 export default function OnlineFriendSidebar() {
   const uid = norm(auth.currentUser?.uid);
-  const nav = useNavigate(); // kept in case you want a “full view” button later
+  const nav = useNavigate();
   const { openChat } = useChatDock();
 
   const [rows, setRows] = useState([]); // [{id,name,photo,online,lastActive}]
@@ -44,9 +44,7 @@ export default function OnlineFriendSidebar() {
 
     const stopPresence = () => {
       presenceUnsubs.forEach((u) => {
-        try {
-          u();
-        } catch {}
+        try { u(); } catch {}
       });
       presenceUnsubs = [];
     };
@@ -54,7 +52,6 @@ export default function OnlineFriendSidebar() {
     const applyFriendIds = async (idsSet) => {
       const ids = Array.from(idsSet).map(norm).filter(Boolean);
 
-      // Fetch user docs; keep previous presence state if any
       const next = [];
       for (const fid of ids) {
         try {
@@ -75,7 +72,7 @@ export default function OnlineFriendSidebar() {
             lastActive: prev?.lastActive || 0,
           });
         } catch (e) {
-          console.warn("[Sidebar] failed to read Users/", fid, e);
+          console.warn("[OnlineFriendSidebar] failed to read Users/", fid, e);
         }
       }
 
@@ -101,7 +98,7 @@ export default function OnlineFriendSidebar() {
 
     const friendIds = new Set();
 
-    // --- Friends (array pair) ---
+    // Pair model
     try {
       const qFriends = query(
         collection(db, "Friends"),
@@ -117,10 +114,10 @@ export default function OnlineFriendSidebar() {
       });
       unsubscribers.push(uFriends);
     } catch (e) {
-      console.warn("[Sidebar] Friends listener failed:", e);
+      console.warn("[OnlineFriendSidebar] Friends listener failed:", e);
     }
 
-    // --- legacy friends (directional, accepted) ---
+    // Legacy directional friends (optional)
     try {
       const qA = query(
         collection(db, "friends"),
@@ -148,10 +145,10 @@ export default function OnlineFriendSidebar() {
       });
       unsubscribers.push(uA, uB);
     } catch (e) {
-      console.warn("[Sidebar] legacy friends listener failed:", e);
+      console.warn("[OnlineFriendSidebar] legacy friends listener failed:", e);
     }
 
-    // --- Fallback: accepted FriendRequests (in case pair doc wasn’t created) ---
+    // Fallback: accepted FriendRequests
     try {
       const qR1 = query(
         collection(db, "FriendRequests"),
@@ -179,7 +176,7 @@ export default function OnlineFriendSidebar() {
       });
       unsubscribers.push(uR1, uR2);
     } catch (e) {
-      console.warn("[Sidebar] FriendRequests listener failed:", e);
+      console.warn("[OnlineFriendSidebar] FriendRequests listener failed:", e);
     }
 
     setLoading(true);
@@ -187,9 +184,7 @@ export default function OnlineFriendSidebar() {
     return () => {
       alive = false;
       unsubscribers.forEach((u) => {
-        try {
-          u();
-        } catch {}
+        try { u(); } catch {}
       });
       stopPresence();
     };
@@ -211,7 +206,7 @@ export default function OnlineFriendSidebar() {
   if (!uid) return null;
 
   return (
-    <aside className="ofs-panel">
+    <aside className="ofs-panel">{/* unchanged wrapper class */}
       <div className="ofs-header">Contacts · {onlineCount} online</div>
 
       {loading && <div className="ofs-empty">Loading…</div>}

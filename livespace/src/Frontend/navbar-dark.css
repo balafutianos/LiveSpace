@@ -12,15 +12,22 @@
   --pop: rgba(13, 36, 46, .96);
 }
 
-.nav-wrap{
-  position: sticky; top: 0; z-index: 40;
+.nav-wrap {
+  position: fixed;     /* <- always stays at top */
+  top: 0; left: 0; right: 0;
+  z-index: 1000;       /* keep above sidebars/feed */
   display:flex; align-items:center; gap:16px;
   height:56px;
   padding: 8px 14px;
   backdrop-filter: blur(10px);
-  background: radial-gradient(1000px 200px at 20% -120%, rgba(0,255,144,.08), transparent 40%) , var(--nav-bg);
+  background: radial-gradient(
+    1000px 200px at 20% -120%,
+    rgba(0,255,144,.08),
+    transparent 40%
+  ), var(--nav-bg);
   border-bottom: 1px solid var(--nav-stroke);
 }
+
 
 .brand{ user-select:none; cursor:pointer }
 .brand-mark{

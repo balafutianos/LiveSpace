@@ -155,7 +155,7 @@ export default function FeedSidebar({ currentUserId }) {
 
       <Item
         label="Friend Requests"
-        to="/friends"
+        to="/friendrequests"
         badge={friendReqCount}
         icon={
           <svg viewBox="0 0 24 24">

@@ -18,13 +18,15 @@ import { usePresence } from "./Frontend/presence";
 import { ChatDockProvider } from "./Frontend/ChatDockContext";
 import ChatDock from "./Frontend/ChatDock";
 import FeedSidebar from "./Frontend/FeedSidebar";
-
+import Photos from "./Frontend/Photos";
 import Feed from "./Frontend/Feed";
 import Signup from "./Frontend/Signup";
 import Login from "./Frontend/Login";
 import VerifyEmail from "./Frontend/VerifyEmail";
 import Profile from "./Frontend/Profile";
 import Messages from "./Frontend/Messages";
+import FriendRequests from "./Frontend/FriendRequests";
+import Events from "./Frontend/Events";
 import "react-toastify/dist/ReactToastify.css";
 
 /* ---------- Guard: require signed-in + verified email ---------- */
@@ -39,6 +41,7 @@ function RequireVerified({ user, children }) {
 function AuthedLayout({ user }) {
   usePresence(user?.uid || null);
 
+  // Search state/logic for Navbar
   const [searchTerm, setSearchTerm] = React.useState("");
   const [searchResults, setSearchResults] = React.useState([]);
 
@@ -74,25 +77,36 @@ function AuthedLayout({ user }) {
 
   return (
     <ChatDockProvider>
-      <div style={{ display: "grid", gridTemplateRows: "56px 1fr", height: "100vh" }}>
-        <Navbar
-          currentUserId={user.uid}
-          searchTerm={searchTerm}
-          setSearchTerm={setSearchTerm}
-          handleSearch={handleSearch}
-          searchResults={searchResults}
-        />
+      {/* Fixed navbar (CSS does the fixing). We add a spacer below it. */}
+      <Navbar
+        currentUserId={user.uid}
+        searchTerm={searchTerm}
+        setSearchTerm={setSearchTerm}
+        handleSearch={handleSearch}
+        searchResults={searchResults}
+      />
+      {/* Spacer equal to navbar height so content starts below it */}
+      <div style={{ height: 56 }} />
 
-        <div style={{ display: "grid", gridTemplateColumns: "240px 1fr 280px", height: "100%" }}>
-          <FeedSidebar currentUserId={user.uid} />
-          <main style={{ overflow: "auto" }}>
-            <Outlet />
-          </main>
-          <OnlineFriendSidebar />
-        </div>
+      {/* Main 3-column layout under the fixed navbar */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "240px 1fr 280px",
+          minHeight: "calc(100vh - 56px)",
+        }}
+      >
+        <FeedSidebar currentUserId={user.uid} />
 
-        <ChatDock currentUserId={user.uid} />
+        <main style={{ overflow: "auto" }}>
+          <Outlet />
+        </main>
+
+        <OnlineFriendSidebar />
       </div>
+
+      {/* Floating chat dock anchored bottom-right */}
+      <ChatDock currentUserId={user.uid} />
     </ChatDockProvider>
   );
 }
@@ -105,6 +119,7 @@ export default function App() {
     return () => unsub();
   }, []);
 
+  // 🔒 Fail-safe: dismiss every toast 5s after it’s added
   useEffect(() => {
     const unsub = toast.onChange((payload) => {
       if (payload.status === "added") {
@@ -134,15 +149,17 @@ export default function App() {
           }
         >
           <Route path="/feed" element={<Feed />} />
+          <Route path="/photos" element={<Photos />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/profile/:uid" element={<Profile />} />
           <Route path="/messages" element={<Messages />} />
           <Route path="/messages/:uid" element={<Messages />} />
+          <Route path="/friendrequests" element={<FriendRequests />} />
+          <Route path="/events" element={<Events />} />
         </Route>
 
         {/* Fallback */}
-        <Route
-          path="*"
+        <Route path="*"
           element={<Navigate to={user ? "/feed" : "/"} replace />}
         />
       </Routes>

@@ -80,6 +80,7 @@ body{
   border: 1px solid color-mix(in oklab, var(--border) 70%, #0000);
   background: var(--surface);
   box-shadow: var(--shadow-1);
+  color: white;
 }
 .login-form input::placeholder{ color: #6e7d85; }
 .login-form input:focus-visible{
