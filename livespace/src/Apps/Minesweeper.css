@@ -1,0 +1,41 @@
+.minesweeper {
+  text-align: center;
+  padding: 16px;
+}
+
+.board {
+  display: inline-block;
+  margin-top: 10px;
+}
+
+.row {
+  display: flex;
+}
+
+.cell {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #444;
+  cursor: pointer;
+  font-weight: bold;
+  color: #eee;
+}
+
+.cell.revealed {
+  background: #222;
+  cursor: default;
+}
+
+.cell.flagged {
+  background: #555;
+}
+
+.status {
+  margin: 10px;
+  font-size: 18px;
+  color: red;
+}
