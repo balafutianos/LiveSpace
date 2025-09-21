@@ -26,9 +26,11 @@ import VerifyEmail from "./Frontend/VerifyEmail";
 import Profile from "./Frontend/Profile";
 import Messages from "./Frontend/Messages";
 import FriendRequests from "./Frontend/FriendRequests";
+import ChessApp from "./Apps/ChessApp";
+import MinesweeperApp from "./Apps/Minesweeper";
 import Events from "./Frontend/Events";
 import "react-toastify/dist/ReactToastify.css";
-
+import AppCenter from "./Frontend/AppCenter";
 /* ---------- Guard: require signed-in + verified email ---------- */
 function RequireVerified({ user, children }) {
   if (user === undefined) return null; // still loading
@@ -156,6 +158,10 @@ export default function App() {
           <Route path="/messages/:uid" element={<Messages />} />
           <Route path="/friendrequests" element={<FriendRequests />} />
           <Route path="/events" element={<Events />} />
+          <Route path="/apps" element={<AppCenter />} />
+          <Route path="/apps/chess" element={<ChessApp />} />
+          <Route path="/apps/minesweeper" element={<MinesweeperApp />} />
+
         </Route>
 
         {/* Fallback */}

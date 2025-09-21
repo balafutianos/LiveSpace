@@ -1,0 +1,89 @@
+.chess-shell{
+  padding:16px;
+  display:grid;
+  grid-template-columns: 1fr;
+  gap:16px;
+}
+
+.chess-top{
+  display:grid;
+  grid-template-columns: 320px 1fr;
+  gap:16px;
+}
+@media (max-width: 980px){
+  .chess-top{ grid-template-columns: 1fr; }
+}
+
+.chess-card{
+  background:#0f172a;
+  color:#e2e8f0;
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:12px;
+  padding:12px;
+}
+.chess-h{ font-weight:800; margin-bottom:8px; }
+
+.chess-row{ display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap: wrap; }
+.lbl{ opacity:.8; }
+
+.btn{
+  padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,.12);
+  background:#0b1220; color:#e2e8f0; cursor:pointer;
+}
+.btn:hover{ background:#0d1628; }
+.btn-primary{
+  background: rgba(0,255,144,.16);
+  border-color: rgba(0,255,144,.26);
+}
+.btn-primary:hover{ background: rgba(0,255,144,.26); }
+.btn-ghost{ background: transparent; }
+
+.stats{ margin-top:12px; }
+.stat{ background:#0b1220; padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,.07); }
+.stat .num{ font-size:20px; font-weight:800; }
+.stat .lbl{ opacity:.7; font-size:12px; }
+
+.mini-op{ display:flex; gap:8px; align-items:center; }
+.mini-op img{ width:28px; height:28px; border-radius:999px; border:1px solid rgba(255,255,255,.12); }
+
+.chess-board-wrap{
+  display:flex; flex-direction:column; align-items:center; gap:10px;
+}
+.chess-status{ font-weight:700; }
+.side-tag{ opacity:.7; font-weight:600; margin-left:6px; }
+
+.board{
+  width:min(640px, 90vw);
+  aspect-ratio:1/1;
+  display:grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  border-radius:12px; overflow:hidden;
+  border:1px solid rgba(255,255,255,.12);
+}
+.sq{ position:relative; display:grid; place-items:center; cursor:pointer; border:none; }
+.sq.light{ background:#e7e7e7; }
+.sq.dark{ background:#769656; }
+.white .sq{ transform: none; }
+.black .sq{ transform: rotate(180deg); }
+.black .sq .p{ transform: rotate(180deg); } /* pieces upright from your POV */
+.sq.sel{ outline: 3px solid rgba(0,255,144,.5); z-index:1; }
+
+.p{ width:84%; height:84%; background-size:contain; background-repeat:no-repeat; background-position:center; }
+/* Simple SVG sprites via data-URIs (lightweight). Replace with your images if you want. */
+.pwp{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/wp.png');}
+.pwn{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/wn.png');}
+.pwb{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/wb.png');}
+.pwr{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/wr.png');}
+.pwq{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/wq.png');}
+.pwk{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/wk.png');}
+
+.pbp{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/bp.png');}
+.pbn{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/bn.png');}
+.pbb{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/bb.png');}
+.pbr{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/br.png');}
+.pbq{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/bq.png');}
+.pbk{ background-image:url('https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/bk.png');}
+
+/* Map class names e.g. piece.color+piece.type => 'wp'|'bp' + type letter */
+.pwq.p, .pwk.p, .pwr.p, .pwb.p, .pwn.p, .pwp.p {}
