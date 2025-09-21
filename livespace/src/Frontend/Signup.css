@@ -446,3 +446,56 @@ body > svg {
   right: 6px;
   top: 6px;
 }
+/* What's New section */
+.motto-section {
+  color: var(--ink);
+  text-shadow: 0 1px 0 rgba(0,0,0,.15);
+}
+
+.motto-section h1 {
+  font-size: clamp(32px, 4vw, 72px);
+  font-weight: 900;
+  margin-bottom: 1.5rem;
+  color: white;
+}
+#version{
+  color: var(--brand-500);
+  text-align: left;
+}
+
+.features-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 18px;
+}
+
+.features-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.features-list .icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-m);
+  display: grid;
+  place-items: center;
+  background: color-mix(in oklab, var(--brand-400) 20%, transparent);
+  color: var(--brand-500);
+  box-shadow: var(--shadow-1);
+}
+
+.features-list span {
+  font-size: clamp(16px, 1.6vw, 20px);
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.features-list strong {
+  color: var(--brand-600);
+  font-weight: 800;
+}
