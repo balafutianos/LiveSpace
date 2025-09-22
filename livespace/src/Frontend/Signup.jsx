@@ -5,6 +5,10 @@ import { setDoc, doc } from "firebase/firestore";
 import { toast } from "react-toastify";
 import "./Signup.css";
 import Nav from "./Nav";
+import { Newspaper, ShoppingBag , User } from "lucide-react";
+
+
+
 import { Eye, EyeOff } from "lucide-react"
 function Signup() {
   const [email, setEmail] = useState("");
@@ -100,12 +104,24 @@ await setDoc(doc(db, "Users", user.uid), {
 
       <div className="signup-page">
         <div className="motto-section">
-          <h1>Welcome to Livespace</h1>
-          <p>
-            Connect with friends, share your moments, and stay updated with your
-            loved ones — all for free.
-          </p>
-        </div>
+  <h1>What’s New in This Version <strong id="version"><br></br>ALPHA 3.5 </strong></h1>
+  <hr></hr>
+  <ul className="features-list">
+    <li>
+      <Newspaper size={28} className="icon" />
+      <span><strong>Activity Feed</strong> See what your contacts are sharing</span>
+    </li>
+    <li>
+      <ShoppingBag size={28} className="icon" />
+      <span><strong>Live Store in Beta!</strong> Play online with your friends or download plugins to your profile!</span>
+    </li>
+    <li>
+      <User size={28} className="icon" />
+      <span><strong>Friends Sidebar</strong> Improved Messaging systemand new Sidebar indicating who is online.</span>
+    </li>
+  </ul>
+</div>
+
 
         <div className="signup-container">
           <div className="signup-header">
