@@ -40,7 +40,7 @@ const CHESS_APP = {
   description: "Play vs AI or challenge your Livespace friends. Tracks your wins.",
   iconUrl: "https://images.chesscomfiles.com/chess-themes/pieces/alpha/150/wk.png",
   coverUrl:
-    "https://images.unsplash.com/photo-1546538914-bf8364f71a5d?q=80&w=2069&auto=format&fit=crop",
+    "./photos/Chess.jpg",
   gameUrl: "/apps/chess", // internal route
   categories: ["board", "strategy", "multiplayer"],
   visibility: "public",
@@ -52,7 +52,7 @@ const MINESWEEPER_APP = {
   title: "Minesweeper",
   description: "Classic puzzle: clear the field without hitting a mine.",
   iconUrl: "https://img.icons8.com/emoji/96/bomb-emoji.png",
-  coverUrl: "https://i.imgur.com/cqjlQkH.jpeg",
+  coverUrl: "https://cdn2.steamgriddb.com/logo/a79c879d28c5c8a4707d52bbaa57607f.png",
   gameUrl: "/apps/minesweeper",
   categories: ["puzzle", "classic", "singleplayer"],
   visibility: "public",
