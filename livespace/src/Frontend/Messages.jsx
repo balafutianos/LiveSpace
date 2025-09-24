@@ -34,12 +34,22 @@ function threadIdFor(a, b) {
 }
 
 // ---- WebRTC config ----
+// Flip FORCE_TURN to true *temporarily* to prove TURN fixes your "failed" state.
+const FORCE_TURN = false;
+
 const RTC_CONFIG = {
   iceServers: [
+    // STUN
     { urls: ["stun:stun.l.google.com:19302"] },
-    // Add TURN here for production (symmetric NATs need it):
-    // { urls: 'turn:YOUR_TURN_HOST:3478', username: 'user', credential: 'pass' },
+    { urls: ["stun:stun1.l.google.com:19302"] },
+    { urls: ["stun:stun2.l.google.com:19302"] },
+    // ✅ TURN (replace with your server + creds; include UDP and TCP/TLS)
+    // { urls: "turn:turn.YOUR_DOMAIN.com:3478?transport=udp", username: "USER", credential: "PASS" },
+    // { urls: "turn:turn.YOUR_DOMAIN.com:3478?transport=tcp", username: "USER", credential: "PASS" },
+    // { urls: "turns:turn.YOUR_DOMAIN.com:5349?transport=tcp", username: "USER", credential: "PASS" },
   ],
+  ...(FORCE_TURN ? { iceTransportPolicy: "relay" } : {}),
+  iceCandidatePoolSize: 8,
 };
 
 function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming }) {
