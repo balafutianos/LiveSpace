@@ -33,8 +33,11 @@ function threadIdFor(a, b) {
   return `${x}_${y}`;
 }
 
-// ---- WebRTC config ----
-// Flip FORCE_TURN to true *temporarily* to prove TURN fixes your "failed" state.
+/* =======================
+   WebRTC configuration
+   ======================= */
+// Flip FORCE_TURN to true TEMPORARILY to prove TURN fixes “connecting → failed”.
+// Replace the TURN servers with your real host/creds.
 const FORCE_TURN = false;
 
 const RTC_CONFIG = {
@@ -43,10 +46,10 @@ const RTC_CONFIG = {
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
     { urls: ["stun:stun2.l.google.com:19302"] },
-    // ✅ TURN (replace with your server + creds; include UDP and TCP/TLS)
-    // { urls: "turn:turn.YOUR_DOMAIN.com:3478?transport=udp", username: "USER", credential: "PASS" },
-    // { urls: "turn:turn.YOUR_DOMAIN.com:3478?transport=tcp", username: "USER", credential: "PASS" },
-    // { urls: "turns:turn.YOUR_DOMAIN.com:5349?transport=tcp", username: "USER", credential: "PASS" },
+    // ✅ TURN (replace with a real server + creds)
+    // { urls: "turn:your.turn.host:3478?transport=udp", username: "USER", credential: "PASS" },
+    // { urls: "turn:your.turn.host:3478?transport=tcp", username: "USER", credential: "PASS" },
+    // { urls: "turns:your.turn.host:5349?transport=tcp", username: "USER", credential: "PASS" },
   ],
   ...(FORCE_TURN ? { iceTransportPolicy: "relay" } : {}),
   iceCandidatePoolSize: 8,
@@ -61,6 +64,12 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
   const remoteVideoRef = useRef(null);
   const [callDocRef, setCallDocRef] = useState(null);
   const watchUnsubsRef = useRef([]);
+
+  // Helper: candidate type for logging
+  function candType(s) {
+    const m = / typ (\w+) /i.exec(s || "");
+    return m ? m[1] : "unknown";
+  }
 
   // HTTPS hint (gUM requires secure origin, except localhost)
   useEffect(() => {
@@ -135,7 +144,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
         peer = new RTCPeerConnection(RTC_CONFIG);
         setPc(peer);
 
-        // helpful logs/state → easier to debug
+        // Helpful logs/state
         peer.oniceconnectionstatechange = () => {
           console.log("iceConnectionState:", peer.iceConnectionState);
         };
@@ -152,6 +161,9 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
         peer.onicegatheringstatechange = () => {
           console.log("iceGatheringState:", peer.iceGatheringState);
         };
+        peer.addEventListener("icecandidateerror", (e) => {
+          console.warn("icecandidateerror", e.url, e.errorCode, e.errorText);
+        });
 
         // Ensure we can receive even if the other side toggles tracks
         try {
@@ -161,31 +173,30 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           /* older browsers ignore */
         }
 
-        // local tracks
+        // Local tracks
         s.getTracks().forEach((t) => peer.addTrack(t, s));
 
-        // remote tracks
+        // Remote tracks (robust across browsers)
         peer.ontrack = (ev) => {
-  // Prefer the single track directly
-  if (ev.track) {
-    const already = remoteStream.getTracks().some((t) => t.id === ev.track.id);
-    if (!already) remoteStream.addTrack(ev.track);
-  }
+          // Add single track directly
+          if (ev.track) {
+            const already = remoteStream.getTracks().some((t) => t.id === ev.track.id);
+            if (!already) remoteStream.addTrack(ev.track);
+          }
+          // Also copy from first stream if provided
+          const firstStream = ev.streams && ev.streams[0];
+          if (firstStream) {
+            firstStream.getTracks().forEach((t) => {
+              const exists = remoteStream.getTracks().some((x) => x.id === t.id);
+              if (!exists) remoteStream.addTrack(t);
+            });
+          }
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.play?.().catch(() => {});
+          }
+        };
 
-  // Also handle the case where the stream array is present
-  const firstStream = (ev.streams && ev.streams[0]) ? ev.streams[0] : null;
-  if (firstStream) {
-    firstStream.getTracks().forEach((t) => {
-      const already = remoteStream.getTracks().some((x) => x.id === t.id);
-      if (!already) remoteStream.addTrack(t);
-    });
-  }
-
-  if (remoteVideoRef.current) {
-    remoteVideoRef.current.srcObject = remoteStream;
-    remoteVideoRef.current.play?.().catch(() => {}); // nudge autoplay
-  }
-};
         const tid = threadId;
 
         if (role === "caller") {
@@ -206,13 +217,12 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           peer.onicecandidate = async (e) => {
             if (!e.candidate) return;
             try {
-              // Save FULL candidate object (toJSON has candidate/sdpMid/sdpMLineIndex/usernameFragment)
               await addDoc(callerCandCol, {
                 ...e.candidate.toJSON?.(),
                 createdAt: serverTimestamp(),
                 from: "caller",
               });
-              console.log("sent ICE (caller)");
+              console.log("sent ICE (caller)", candType(e.candidate.candidate));
             } catch (err) {
               console.error("failed to write caller ICE", err);
             }
@@ -222,7 +232,6 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           const unsubAns = onSnapshot(callDoc, async (snap) => {
             const data = snap.data();
             try {
-              // IMPORTANT FIX: use peer.remoteDescription (not currentRemoteDescription)
               if (data?.answer && !peer.remoteDescription) {
                 await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
                 setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
@@ -250,7 +259,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
                     usernameFragment: c.usernameFragment ?? null,
                   })
                 );
-                console.log("added remote ICE (callee)");
+                console.log("added remote ICE (callee)", candType(c.candidate));
               } catch (err) {
                 console.warn("addIceCandidate (callee) failed", err, c);
               }
@@ -271,7 +280,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
                 createdAt: serverTimestamp(),
                 from: "callee",
               });
-              console.log("sent ICE (callee)");
+              console.log("sent ICE (callee)", candType(e.candidate.candidate));
             } catch (err) {
               console.error("failed to write callee ICE", err);
             }
@@ -312,7 +321,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
                     usernameFragment: c.usernameFragment ?? null,
                   })
                 );
-                console.log("added remote ICE (caller)");
+                console.log("added remote ICE (caller)", candType(c.candidate));
               } catch (err) {
                 console.warn("addIceCandidate (caller) failed", err, c);
               }
@@ -330,6 +339,23 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
 
           watchUnsubsRef.current = [unsubCallerC, unsubDoc];
         }
+
+        // Optional: after a few seconds, try to print selected candidate pair
+        setTimeout(async () => {
+          try {
+            const stats = await peer.getStats();
+            stats.forEach((r) => {
+              if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
+                const l = stats.get(r.localCandidateId);
+                const rmt = stats.get(r.remoteCandidateId);
+                console.log("Selected pair:", {
+                  local: l && { type: l.candidateType, protocol: l.protocol, ip: l.ip },
+                  remote: rmt && { type: rmt.candidateType, protocol: rmt.protocol, ip: rmt.ip },
+                });
+              }
+            });
+          } catch {}
+        }, 8000);
 
         function cleanup() {
           try {
