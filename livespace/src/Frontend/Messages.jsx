@@ -156,13 +156,26 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
 
         // remote tracks
         peer.ontrack = (ev) => {
-          ev.streams[0].getTracks().forEach((t) => remoteStream.addTrack(t));
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteStream;
-            remoteVideoRef.current.play?.().catch(() => {});
-          }
-        };
+  // Prefer the single track directly
+  if (ev.track) {
+    const already = remoteStream.getTracks().some((t) => t.id === ev.track.id);
+    if (!already) remoteStream.addTrack(ev.track);
+  }
 
+  // Also handle the case where the stream array is present
+  const firstStream = (ev.streams && ev.streams[0]) ? ev.streams[0] : null;
+  if (firstStream) {
+    firstStream.getTracks().forEach((t) => {
+      const already = remoteStream.getTracks().some((x) => x.id === t.id);
+      if (!already) remoteStream.addTrack(t);
+    });
+  }
+
+  if (remoteVideoRef.current) {
+    remoteVideoRef.current.srcObject = remoteStream;
+    remoteVideoRef.current.play?.().catch(() => {}); // nudge autoplay
+  }
+};
         const tid = threadId;
 
         if (role === "caller") {
