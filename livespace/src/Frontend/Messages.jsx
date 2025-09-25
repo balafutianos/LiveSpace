@@ -1,4 +1,4 @@
-// Messages.jsx (full)
+// Messages.jsx (full, with receive-only fallback)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -17,7 +17,7 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
-// OPTIONAL: only if you added the emoji keyboard files I gave you.
+// OPTIONAL: only if you added the emoji keyboard files.
 // If you didn't add them yet, comment the next line.
 import EmojiKeyboard from "./EmojiKeyboard";
 
@@ -37,14 +37,16 @@ function threadIdFor(a, b) {
    WebRTC configuration
    ======================= */
 // Flip FORCE_TURN to true TEMPORARILY to prove TURN fixes “connecting → failed”.
+// Replace the TURN servers with your real host/creds.
 const FORCE_TURN = false;
 
 const RTC_CONFIG = {
   iceServers: [
+    // STUN
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
     { urls: ["stun:stun2.l.google.com:19302"] },
-    // TURN (replace with your real server/creds if needed):
+    // ✅ TURN (replace with a real server + creds)
     // { urls: "turn:your.turn.host:3478?transport=udp", username: "USER", credential: "PASS" },
     // { urls: "turn:your.turn.host:3478?transport=tcp", username: "USER", credential: "PASS" },
     // { urls: "turns:your.turn.host:5349?transport=tcp", username: "USER", credential: "PASS" },
@@ -55,156 +57,155 @@ const RTC_CONFIG = {
 
 function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming }) {
   const [pc, setPc] = useState(null);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream] = useState(new MediaStream());
   const [status, setStatus] = useState(role === "callee" ? "Incoming…" : "Calling…");
-  const [callDocRef, setCallDocRef] = useState(null);
-
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
-
-  const localStreamRef = useRef(null);
-  const inboundRef = useRef(new MediaStream()); // our own remote stream
-  const [remoteMuted, setRemoteMuted] = useState(true);
-  const [needsTap, setNeedsTap] = useState(false);
-
+  const [callDocRef, setCallDocRef] = useState(null);
   const watchUnsubsRef = useRef([]);
 
-  // prefer VP8 to avoid H.264/GPU decode quirks
-  function preferVideoCodec(sdp, codecName = "VP8") {
-    if (!sdp) return sdp;
-    const lines = sdp.split("\r\n");
-    const mIndex = lines.findIndex((l) => l.startsWith("m=video"));
-    if (mIndex === -1) return sdp;
-    const rtpmap = lines
-      .map((l, i) => ({ i, l }))
-      .filter((x) => x.l.startsWith("a=rtpmap:"))
-      .map((x) => {
-        const m = /^a=rtpmap:(\d+)\s+([A-Za-z0-9\-]+)/.exec(x.l);
-        return m ? { pt: m[1], codec: m[2].toUpperCase() } : null;
-      })
-      .filter(Boolean);
-    const pref = rtpmap.filter((x) => x.codec.includes(codecName.toUpperCase())).map((x) => x.pt);
-    if (!pref.length) return sdp;
-    const parts = lines[mIndex].split(" ");
-    lines[mIndex] = [...parts.slice(0, 3), ...pref, ...parts.slice(3).filter((p) => !pref.includes(p))].join(" ");
-    return lines.join("\r\n");
+  // HTTPS hint (gUM requires secure origin, except localhost)
+  useEffect(() => {
+    if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
+      console.warn("Tip: Use HTTPS (or localhost) for getUserMedia.");
+    }
+  }, []);
+
+  // Helper: candidate type for logging
+  function candType(s) {
+    const m = / typ (\w+) /i.exec(s || "");
+    return m ? m[1] : "unknown";
   }
 
+  // Smart media getter: detects devices and falls back to audio-only if needed
   async function getMediaSmart() {
-    const md = navigator.mediaDevices;
-    if (!md?.getUserMedia) {
-      const e = new Error("MEDIA_API_UNAVAILABLE");
-      e.code = "MEDIA_API_UNAVAILABLE";
-      throw e;
-    }
-    let hasCam = true, hasMic = true;
-    try {
-      const devs = await md.enumerateDevices();
-      hasCam = devs.some((d) => d.kind === "videoinput");
-      hasMic = devs.some((d) => d.kind === "audioinput");
-    } catch {}
-    if (!hasCam && !hasMic) {
-      const e = new Error("NO_DEVICES");
-      e.code = "NO_DEVICES";
-      throw e;
-    }
-    try {
-      return await md.getUserMedia({ video: hasCam ? { facingMode: "user" } : false, audio: !!hasMic });
-    } catch (err) {
-      if (hasMic) return await md.getUserMedia({ video: false, audio: true });
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      const err = new Error("MEDIA_API_UNAVAILABLE");
+      err.code = "MEDIA_API_UNAVAILABLE";
       throw err;
     }
-  }
 
-  // try to start video element; if blocked, show overlay
-  async function startRemotePlayback() {
-    const el = remoteVideoRef.current;
-    if (!el) return;
+    let hasCam = true;
+    let hasMic = true;
     try {
-      await el.play();
-      setNeedsTap(false);
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      hasCam = devices.some((d) => d.kind === "videoinput");
+      hasMic = devices.some((d) => d.kind === "audioinput");
     } catch {
-      setNeedsTap(true);
+      // If enumerateDevices fails, proceed and let gUM decide.
     }
-  }
 
-  // if no frames after attach, re-attach and retry play()
-  function ensureFirstFrame() {
-    const el = remoteVideoRef.current;
-    if (!el) return;
-    if ("requestVideoFrameCallback" in el) {
-      el.requestVideoFrameCallback?.((/* now, metadata */) => {
-        // got a frame; keep going
-      });
-    } else {
-      // Fallback: retry once after a short delay
-      setTimeout(() => {
-        el.pause?.();
-        const s = el.srcObject;
-        el.srcObject = null;
-        el.srcObject = s;
-        startRemotePlayback();
-      }, 600);
+    if (!hasCam && !hasMic) {
+      const err = new Error("NO_DEVICES");
+      err.code = "NO_DEVICES";
+      throw err;
+    }
+
+    const constraints = {
+      video: hasCam ? { facingMode: "user" } : false,
+      audio: !!hasMic,
+    };
+
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      // Retry audio-only if camera fails but mic exists
+      if (hasMic) {
+        return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      }
+      throw e; // neither mic nor cam available
     }
   }
 
   useEffect(() => {
     if (!open) return;
-    let peer; let stopped = false;
+
+    let peer;
+    let stopped = false;
 
     (async () => {
       try {
-        const local = await getMediaSmart();
-        if (stopped) return;
-        localStreamRef.current = local;
-
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = local;
-          localVideoRef.current.play?.().catch(() => {});
+        // ---- MEDIA ACQUISITION ----
+        // We try to get local media; if it fails completely (no mic & no cam),
+        // we continue in **receive-only** mode so we can still see/hear the peer.
+        let s = null;
+        try {
+          s = await getMediaSmart();
+          if (stopped) return;
+          setLocalStream(s);
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = s;
+            localVideoRef.current.play?.().catch(() => {});
+          }
+        } catch (e) {
+          console.warn("No local devices; switching to receive-only mode", e);
+          // s stays null -> recvonly below
         }
 
-        peer = new RTCPeerConnection({
-          iceServers: [
-            { urls: ["stun:stun.l.google.com:19302"] },
-            { urls: ["stun:stun1.l.google.com:19302"] },
-            { urls: ["stun:stun2.l.google.com:19302"] },
-            // add your TURN here for production
-          ],
-          iceCandidatePoolSize: 8,
-        });
+        const audioTracks = s?.getAudioTracks?.() || [];
+        const videoTracks = s?.getVideoTracks?.() || [];
+        const audioOnly = !!s && videoTracks.length === 0 && audioTracks.length > 0;
+        const recvOnly = !s;
+
+        peer = new RTCPeerConnection(RTC_CONFIG);
         setPc(peer);
 
-        // transceivers help browsers that are picky about recvonly tracks
-        try {
-          peer.addTransceiver("audio", { direction: "sendrecv" });
-          peer.addTransceiver("video", { direction: "sendrecv" });
-        } catch {}
-
-        // send our tracks
-        local.getTracks().forEach((t) => peer.addTrack(t, local));
-
-        // receive remote tracks — always attach to our own inbound stream
-        peer.ontrack = (ev) => {
-          if (ev.track) {
-            const exists = inboundRef.current.getTracks().some((t) => t.id === ev.track.id);
-            if (!exists) inboundRef.current.addTrack(ev.track);
-          }
-          if (remoteVideoRef.current) {
-            // force a fresh assignment to bump some browsers
-            remoteVideoRef.current.srcObject = null;
-            remoteVideoRef.current.srcObject = inboundRef.current;
-            remoteVideoRef.current.muted = remoteMuted; // start muted for autoplay
-            startRemotePlayback().then(ensureFirstFrame);
-          }
-          // make sure we kick when the first data flows
-          ev.track.onunmute = () => startRemotePlayback();
+        // Helpful logs/state
+        peer.oniceconnectionstatechange = () => {
+          console.log("iceConnectionState:", peer.iceConnectionState);
         };
-
-        // status hints
         peer.onconnectionstatechange = () => {
+          console.log("connectionState:", peer.connectionState);
           const st = peer.connectionState;
-          if (st === "connected") setStatus("Connected");
+          const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
+          if (st === "connected") setStatus("Connected" + suffix);
           else if (st === "connecting") setStatus("Connecting…");
           else if (st === "disconnected" || st === "failed") setStatus("Disconnected");
+        };
+        peer.onsignalingstatechange = () => {
+          console.log("signalingState:", peer.signalingState);
+        };
+        peer.onicegatheringstatechange = () => {
+          console.log("iceGatheringState:", peer.iceGatheringState);
+        };
+        peer.addEventListener("icecandidateerror", (e) => {
+          console.warn("icecandidateerror", e.url, e.errorCode, e.errorText);
+        });
+
+        // Always declare that we want to receive A/V.
+        // If we have a local stream, we sendrecv; otherwise recvonly (pure receiver).
+        try {
+          peer.addTransceiver("audio", { direction: s ? "sendrecv" : "recvonly" });
+        } catch {}
+        try {
+          peer.addTransceiver("video", { direction: s ? "sendrecv" : "recvonly" });
+        } catch {}
+
+        // Add local tracks (if any)
+        if (s) {
+          s.getTracks().forEach((t) => peer.addTrack(t, s));
+        }
+
+        // Remote tracks (robust across browsers)
+        peer.ontrack = (ev) => {
+          if (ev.track) {
+            const exists = remoteStream.getTracks().some((t) => t.id === ev.track.id);
+            if (!exists) remoteStream.addTrack(ev.track);
+          }
+          const firstStream = ev.streams && ev.streams[0];
+          if (firstStream) {
+            firstStream.getTracks().forEach((t) => {
+              const exists = remoteStream.getTracks().some((x) => x.id === t.id);
+              if (!exists) remoteStream.addTrack(t);
+            });
+          }
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.play?.().catch(() => {});
+          }
+          if (ev.track?.kind === "video") console.log("Receiving remote VIDEO");
+          if (ev.track?.kind === "audio") console.log("Receiving remote AUDIO");
         };
 
         const tid = threadId;
@@ -219,41 +220,61 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           });
           setCallDocRef(callDoc);
 
-          let offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-          offer = { type: offer.type, sdp: preferVideoCodec(offer.sdp, "VP8") };
+          const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
           await peer.setLocalDescription(offer);
-          await updateDoc(callDoc, { offer });
+          await updateDoc(callDoc, { offer: { type: offer.type, sdp: offer.sdp } });
 
           const callerCandCol = collection(callDoc, "callerCandidates");
           peer.onicecandidate = async (e) => {
             if (!e.candidate) return;
             try {
-              await addDoc(callerCandCol, { ...e.candidate.toJSON?.(), createdAt: serverTimestamp(), from: "caller" });
-            } catch {}
+              await addDoc(callerCandCol, {
+                ...e.candidate.toJSON?.(),
+                createdAt: serverTimestamp(),
+                from: "caller",
+              });
+              console.log("sent ICE (caller)", candType(e.candidate.candidate));
+            } catch (err) {
+              console.error("failed to write caller ICE", err);
+            }
           };
 
+          // watch answer + ended
           const unsubAns = onSnapshot(callDoc, async (snap) => {
             const data = snap.data();
             try {
               if (data?.answer && !peer.remoteDescription) {
                 await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+                const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
+                setStatus("Connected" + suffix);
               }
-              if (data?.status === "ended") cleanup();
-            } catch {}
+              if (data?.status === "ended") {
+                setStatus("Ended");
+                cleanup();
+              }
+            } catch (err) {
+              console.error("apply answer failed", err);
+            }
           });
 
+          // watch callee ICE
           const unsubCalleeC = onSnapshot(collection(callDoc, "calleeCandidates"), async (ss) => {
             for (const ch of ss.docChanges()) {
               if (ch.type !== "added") continue;
               const c = ch.doc.data();
               try {
-                await peer.addIceCandidate(new RTCIceCandidate({
-                  candidate: c.candidate,
-                  sdpMid: c.sdpMid ?? null,
-                  sdpMLineIndex: c.sdpMLineIndex ?? null,
-                  usernameFragment: c.usernameFragment ?? null,
-                }));
-              } catch {}
+                await peer.addIceCandidate(
+                  new RTCIceCandidate({
+                    candidate: c.candidate,
+                    sdpMid: c.sdpMid ?? null,
+                    sdpMLineIndex: c.sdpMLineIndex ?? null,
+                    usernameFragment: c.usernameFragment ?? null,
+                  })
+                );
+                console.log("added remote ICE (callee)", candType(c.candidate));
+              } catch (err) {
+                console.warn("addIceCandidate (callee) failed", err, c);
+              }
             }
           });
 
@@ -266,78 +287,151 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           peer.onicecandidate = async (e) => {
             if (!e.candidate) return;
             try {
-              await addDoc(calleeCandCol, { ...e.candidate.toJSON?.(), createdAt: serverTimestamp(), from: "callee" });
-            } catch {}
+              await addDoc(calleeCandCol, {
+                ...e.candidate.toJSON?.(),
+                createdAt: serverTimestamp(),
+                from: "callee",
+              });
+              console.log("sent ICE (callee)", candType(e.candidate.candidate));
+            } catch (err) {
+              console.error("failed to write callee ICE", err);
+            }
           };
 
+          // set remote offer (guard against double-apply)
           const callSnap = await getDoc(callDoc);
           const data = callSnap.data();
           if (data?.offer && !peer.remoteDescription) {
-            try { await peer.setRemoteDescription(new RTCSessionDescription(data.offer)); } catch {}
+            try {
+              await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+              console.log("callee applied offer");
+            } catch (err) {
+              console.error("setRemoteDescription(offer) failed", err);
+            }
           }
 
-          let answer = await peer.createAnswer();
-          answer = { type: answer.type, sdp: preferVideoCodec(answer.sdp, "VP8") };
+          // create & send answer
+          const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
-          await updateDoc(callDoc, { answer, status: "in-call" });
+          await updateDoc(callDoc, {
+            answer: { type: answer.type, sdp: answer.sdp },
+            status: "in-call",
+          });
+          const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
+          setStatus("Connected" + suffix);
 
+          // watch caller ICE
           const unsubCallerC = onSnapshot(collection(callDoc, "callerCandidates"), async (ss) => {
             for (const ch of ss.docChanges()) {
               if (ch.type !== "added") continue;
               const c = ch.doc.data();
               try {
-                await peer.addIceCandidate(new RTCIceCandidate({
-                  candidate: c.candidate,
-                  sdpMid: c.sdpMid ?? null,
-                  sdpMLineIndex: c.sdpMLineIndex ?? null,
-                  usernameFragment: c.usernameFragment ?? null,
-                }));
-              } catch {}
+                await peer.addIceCandidate(
+                  new RTCIceCandidate({
+                    candidate: c.candidate,
+                    sdpMid: c.sdpMid ?? null,
+                    sdpMLineIndex: c.sdpMLineIndex ?? null,
+                    usernameFragment: c.usernameFragment ?? null,
+                  })
+                );
+                console.log("added remote ICE (caller)", candType(c.candidate));
+              } catch (err) {
+                console.warn("addIceCandidate (caller) failed", err, c);
+              }
             }
           });
 
+          // watch ended
           const unsubDoc = onSnapshot(callDoc, (snap) => {
             const d = snap.data();
-            if (d?.status === "ended") cleanup();
+            if (d?.status === "ended") {
+              setStatus("Ended");
+              cleanup();
+            }
           });
 
           watchUnsubsRef.current = [unsubCallerC, unsubDoc];
         }
 
+        // Optional: after a few seconds, print selected candidate pair
+        setTimeout(async () => {
+          try {
+            const stats = await peer.getStats();
+            stats.forEach((r) => {
+              if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
+                const l = stats.get(r.localCandidateId);
+                const rmt = stats.get(r.remoteCandidateId);
+                console.log("Selected pair:", {
+                  local: l && { type: l.candidateType, protocol: l.protocol, ip: l.ip },
+                  remote: rmt && { type: rmt.candidateType, protocol: rmt.protocol, ip: rmt.ip },
+                });
+              }
+            });
+          } catch {}
+        }, 8000);
+
         function cleanup() {
-          try { watchUnsubsRef.current.forEach((u) => u && u()); } catch {}
+          try {
+            watchUnsubsRef.current.forEach((u) => u && u());
+          } catch {}
           watchUnsubsRef.current = [];
-          try { peer.close(); } catch {}
-          try { localStreamRef.current?.getTracks?.().forEach((t) => t.stop()); } catch {}
-          inboundRef.current = new MediaStream();
+          try {
+            peer.close();
+          } catch {}
+          try {
+            s && s.getTracks().forEach((t) => t.stop());
+          } catch {}
           setPc(null);
-          onClose?.();
+          if (onClose) onClose();
         }
 
+        // unmount / close
         return () => {
           stopped = true;
-          cleanup();
+          try {
+            watchUnsubsRef.current.forEach((u) => u && u());
+          } catch {}
+          try {
+            peer && peer.close();
+          } catch {}
+          try {
+            localStream && localStream.getTracks().forEach((t) => t.stop());
+          } catch {}
+          watchUnsubsRef.current = [];
+          setPc(null);
         };
       } catch (e) {
         console.error("Video setup error", e);
         if (e?.name === "NotFoundError" || e?.code === "NO_DEVICES") {
-          alert("No camera/microphone was found on this device.");
+          alert(
+`No camera/microphone was found.
+
+Quick checks:
+• Connect a webcam or unmute your laptop mic.
+• macOS: System Settings → Privacy & Security → Camera/Microphone → allow your browser.
+• Windows: Settings → Privacy → Camera/Microphone → allow apps.
+• Browser: Click the lock icon → allow Camera & Microphone.
+• Close apps that may be using the camera (Zoom/Teams).`
+          );
         } else if (e?.name === "NotAllowedError") {
-          alert("Permission denied. Allow camera & mic and try again.");
+          alert("Permission denied. Please allow camera & microphone in the browser site settings and try again.");
         } else if (e?.code === "MEDIA_API_UNAVAILABLE") {
-          alert("This page doesn’t allow getUserMedia. Use HTTPS or http://localhost.");
+          alert("This browser/page doesn’t allow getUserMedia. Use HTTPS or http://localhost.");
         } else {
-          alert("Could not start camera/microphone. See console for details.");
+          alert("Could not start your camera/microphone. See console for details.");
         }
-        onClose?.();
+        if (onClose) onClose();
       }
     })();
-  }, [open, role, me, peerId, threadId, incoming, onClose, remoteMuted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   async function hangUp() {
     setStatus("Ending…");
-    try { if (callDocRef) await updateDoc(callDocRef, { status: "ended" }); } catch {}
-    onClose?.();
+    try {
+      if (callDocRef) await updateDoc(callDocRef, { status: "ended" });
+    } catch {}
+    if (onClose) onClose();
   }
 
   if (!open) return null;
@@ -348,40 +442,10 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           <strong>Video call</strong>
           <span style={{ opacity: .8 }}>{status}</span>
         </div>
-
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, padding: 10 }}>
-          {/* Remote tile */}
-          <div style={{ position: "relative" }}>
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              muted={remoteMuted}
-              style={{ width: "100%", height: 420, background: "#000", borderRadius: 10 }}
-              onLoadedMetadata={() => startRemotePlayback()}
-            />
-            {needsTap && (
-              <button
-                onClick={() => startRemotePlayback()}
-                style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.45)", border: "none", color: "#fff", fontWeight: 800, fontSize: 16, borderRadius: 10, cursor: "pointer" }}
-                title="Start remote video"
-              >
-                Click to start video
-              </button>
-            )}
-            <button
-              onClick={() => { setRemoteMuted((m) => !m); setTimeout(() => startRemotePlayback(), 0); }}
-              style={{ position: "absolute", right: 10, bottom: 10, border: "none", background: "rgba(0,0,0,.55)", color: "#fff", padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontWeight: 700 }}
-              title={remoteMuted ? "Unmute" : "Mute"}
-            >
-              {remoteMuted ? "Unmute" : "Mute"}
-            </button>
-          </div>
-
-          {/* Local mirror */}
+          <video ref={remoteVideoRef} autoPlay playsInline style={{ width: "100%", height: 420, background: "#000", borderRadius: 10 }} />
           <video ref={localVideoRef} autoPlay playsInline muted style={{ width: "100%", height: 420, background: "#000", borderRadius: 10, transform: "scaleX(-1)" }} />
         </div>
-
         <div style={{ padding: 10, display: "flex", gap: 8, justifyContent: "flex-end", background: "#0f1a1d" }}>
           <button onClick={hangUp} style={{ background: "#ff4d4f", color: "#fff", border: "none", padding: "8px 12px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>
             Hang up
@@ -392,27 +456,32 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
   );
 }
 
-
 export default function Messages() {
   const params = useParams();
   const navigate = useNavigate();
   const [me, setMe] = useState(auth.currentUser?.uid || null);
   const [loading, setLoading] = useState(true);
 
+  // who we're chatting with (from /messages/:uid)
   const peerId = params.uid || null;
 
+  // left pane: all my threads
   const [threads, setThreads] = useState([]);
-  const [userCache, setUserCache] = useState({});
+  const [userCache, setUserCache] = useState({}); // uid -> {name, photo}
 
+  // main pane: messages in current thread
   const [msgs, setMsgs] = useState([]);
   const [text, setText] = useState("");
   const inputRef = useRef(null);
 
+  // Emoji toggle
   const [showEmoji, setShowEmoji] = useState(false);
 
+  // Video call state
   const [showCall, setShowCall] = useState(false);
-  const [incomingCall, setIncomingCall] = useState(null);
+  const [incomingCall, setIncomingCall] = useState(null); // {callPath, data}
 
+  // ensure auth
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((u) => {
       if (!u) {
@@ -424,6 +493,7 @@ export default function Messages() {
     return () => unsub();
   }, [navigate]);
 
+  // subscribe to my threads (left list)
   useEffect(() => {
     if (!me) return;
     const qy = query(collection(db, "Messages"), where("userIds", "array-contains", me));
@@ -438,7 +508,7 @@ export default function Messages() {
         });
         setThreads(rows);
 
-        // Fetch left-list user info
+        // Fetch user info for the left list
         const uidsToFetch = new Set();
         rows.forEach((t) => {
           (t.userIds || []).forEach((uid) => {
@@ -469,6 +539,7 @@ export default function Messages() {
     return () => unsub();
   }, [me, userCache]);
 
+  // subscribe to current thread messages
   useEffect(() => {
     if (!me || !peerId) {
       setMsgs([]);
@@ -493,9 +564,11 @@ export default function Messages() {
     return () => unsub();
   }, [me, peerId]);
 
+  // load peer info for header (and cache)
   const peer = useMemo(() => userCache[peerId] || null, [userCache, peerId]);
 
   useEffect(() => {
+    // fetch peer on enter if missing
     (async () => {
       if (!peerId || userCache[peerId]) return;
       const us = await getDoc(doc(db, "Users", peerId));
@@ -506,11 +579,15 @@ export default function Messages() {
           !d.photo || d.photo === "" || d.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : d.photo;
         setUserCache((p) => ({ ...p, [peerId]: { name, photo } }));
       } else {
-        setUserCache((p) => ({ ...p, [peerId]: { name: "User", photo: FALLBACK_IMAGE } }));
+        setUserCache((p) => ({
+          ...p,
+          [peerId]: { name: "User", photo: FALLBACK_IMAGE },
+        }));
       }
     })();
   }, [peerId, userCache]);
 
+  // when opening a thread, set my unread = 0 (map model)
   useEffect(() => {
     if (!me || !peerId) return;
     const tid = threadIdFor(me, peerId);
@@ -518,12 +595,18 @@ export default function Messages() {
     (async () => {
       try {
         await updateDoc(tRef, { [`unread.${me}`]: 0 });
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     })();
   }, [me, peerId]);
 
+  // Incoming call watcher for this thread (only ringing to me)
   useEffect(() => {
-    if (!me || !peerId) { setIncomingCall(null); return; }
+    if (!me || !peerId) {
+      setIncomingCall(null);
+      return;
+    }
     const tid = threadIdFor(me, peerId);
     const callsCol = collection(db, "Messages", tid, "Calls");
     const unsub = onSnapshot(
@@ -594,8 +677,6 @@ export default function Messages() {
     }
   }
 
-  const myThreads = useMemo(() => threads, [threads]);
-
   function insertAtCursor(emoji) {
     const el = inputRef.current;
     if (!el) {
@@ -611,9 +692,13 @@ export default function Messages() {
     requestAnimationFrame(() => {
       el.focus();
       const pos = start + emoji.length;
-      try { el.setSelectionRange(pos, pos); } catch {}
+      try {
+        el.setSelectionRange(pos, pos);
+      } catch {}
     });
   }
+
+  const myThreads = useMemo(() => threads, [threads]);
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", height: "calc(100vh - 60px)" }}>
@@ -654,7 +739,9 @@ export default function Messages() {
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <strong style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <strong
+                      style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                    >
                       {meta.name || "User"}
                     </strong>
                     <small style={{ color: "#666" }}>{timeLabel}</small>
@@ -726,7 +813,7 @@ export default function Messages() {
                 <>
                   <button
                     type="button"
-                    onClick={() => { setShowCall(true); }}
+                    onClick={() => setShowCall(true)}
                     style={{ border: "none", background: "#27D496", color: "#052023", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
                   >
                     Accept video
