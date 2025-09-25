@@ -55,184 +55,156 @@ const RTC_CONFIG = {
 
 function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming }) {
   const [pc, setPc] = useState(null);
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStream] = useState(new MediaStream());
   const [status, setStatus] = useState(role === "callee" ? "Incoming…" : "Calling…");
-  const [needsTap, setNeedsTap] = useState(false); // overlay for autoplay
-  const [remoteMuted, setRemoteMuted] = useState(true); // start muted so autoplay succeeds
+  const [callDocRef, setCallDocRef] = useState(null);
+
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const [callDocRef, setCallDocRef] = useState(null);
+
+  const localStreamRef = useRef(null);
+  const inboundRef = useRef(new MediaStream()); // our own remote stream
+  const [remoteMuted, setRemoteMuted] = useState(true);
+  const [needsTap, setNeedsTap] = useState(false);
+
   const watchUnsubsRef = useRef([]);
 
-  // Helper: log candidate type
-  function candType(s) {
-    const m = / typ (\w+) /i.exec(s || "");
-    return m ? m[1] : "unknown";
-  }
-
-  // Prefer VP8 for broadest interop
+  // prefer VP8 to avoid H.264/GPU decode quirks
   function preferVideoCodec(sdp, codecName = "VP8") {
     if (!sdp) return sdp;
     const lines = sdp.split("\r\n");
     const mIndex = lines.findIndex((l) => l.startsWith("m=video"));
     if (mIndex === -1) return sdp;
-
     const rtpmap = lines
       .map((l, i) => ({ i, l }))
       .filter((x) => x.l.startsWith("a=rtpmap:"))
       .map((x) => {
         const m = /^a=rtpmap:(\d+)\s+([A-Za-z0-9\-]+)/.exec(x.l);
-        return m ? { i: x.i, pt: m[1], codec: m[2].toUpperCase() } : null;
+        return m ? { pt: m[1], codec: m[2].toUpperCase() } : null;
       })
       .filter(Boolean);
-
-    const preferredPTs = rtpmap.filter((x) => x.codec.includes(codecName.toUpperCase())).map((x) => x.pt);
-    if (!preferredPTs.length) return sdp;
-
+    const pref = rtpmap.filter((x) => x.codec.includes(codecName.toUpperCase())).map((x) => x.pt);
+    if (!pref.length) return sdp;
     const parts = lines[mIndex].split(" ");
-    const header = parts.slice(0, 3);
-    const pts = parts.slice(3);
-    const newPts = [...preferredPTs, ...pts.filter((p) => !preferredPTs.includes(p))];
-    lines[mIndex] = [...header, ...newPts].join(" ");
+    lines[mIndex] = [...parts.slice(0, 3), ...pref, ...parts.slice(3).filter((p) => !pref.includes(p))].join(" ");
     return lines.join("\r\n");
   }
 
-  // HTTPS hint (gUM requires secure origin, except localhost)
-  useEffect(() => {
-    if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
-      console.warn("Tip: Use HTTPS (or localhost) for getUserMedia.");
-    }
-  }, []);
-
-  // Smart media getter: detects devices and falls back to audio-only if needed
   async function getMediaSmart() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      const err = new Error("MEDIA_API_UNAVAILABLE");
-      err.code = "MEDIA_API_UNAVAILABLE";
-      throw err;
-    }
-
-    let hasCam = true;
-    let hasMic = true;
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      hasCam = devices.some((d) => d.kind === "videoinput");
-      hasMic = devices.some((d) => d.kind === "audioinput");
-    } catch {
-      // If enumerateDevices fails, proceed and let gUM decide.
-    }
-
-    if (!hasCam && !hasMic) {
-      const err = new Error("NO_DEVICES");
-      err.code = "NO_DEVICES";
-      throw err;
-    }
-
-    const constraints = {
-      video: hasCam ? { facingMode: "user" } : false,
-      audio: !!hasMic,
-    };
-
-    try {
-      return await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (e) {
-      // Retry audio-only if camera fails but mic exists
-      if (hasMic) {
-        return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-      }
+    const md = navigator.mediaDevices;
+    if (!md?.getUserMedia) {
+      const e = new Error("MEDIA_API_UNAVAILABLE");
+      e.code = "MEDIA_API_UNAVAILABLE";
       throw e;
+    }
+    let hasCam = true, hasMic = true;
+    try {
+      const devs = await md.enumerateDevices();
+      hasCam = devs.some((d) => d.kind === "videoinput");
+      hasMic = devs.some((d) => d.kind === "audioinput");
+    } catch {}
+    if (!hasCam && !hasMic) {
+      const e = new Error("NO_DEVICES");
+      e.code = "NO_DEVICES";
+      throw e;
+    }
+    try {
+      return await md.getUserMedia({ video: hasCam ? { facingMode: "user" } : false, audio: !!hasMic });
+    } catch (err) {
+      if (hasMic) return await md.getUserMedia({ video: false, audio: true });
+      throw err;
+    }
+  }
+
+  // try to start video element; if blocked, show overlay
+  async function startRemotePlayback() {
+    const el = remoteVideoRef.current;
+    if (!el) return;
+    try {
+      await el.play();
+      setNeedsTap(false);
+    } catch {
+      setNeedsTap(true);
+    }
+  }
+
+  // if no frames after attach, re-attach and retry play()
+  function ensureFirstFrame() {
+    const el = remoteVideoRef.current;
+    if (!el) return;
+    if ("requestVideoFrameCallback" in el) {
+      el.requestVideoFrameCallback?.((/* now, metadata */) => {
+        // got a frame; keep going
+      });
+    } else {
+      // Fallback: retry once after a short delay
+      setTimeout(() => {
+        el.pause?.();
+        const s = el.srcObject;
+        el.srcObject = null;
+        el.srcObject = s;
+        startRemotePlayback();
+      }, 600);
     }
   }
 
   useEffect(() => {
     if (!open) return;
-
-    let peer;
-    let stopped = false;
+    let peer; let stopped = false;
 
     (async () => {
       try {
-        const s = await getMediaSmart();
+        const local = await getMediaSmart();
         if (stopped) return;
-        setLocalStream(s);
-
-        const audioTracks = s.getAudioTracks();
-        const videoTracks = s.getVideoTracks();
-        const audioOnly = videoTracks.length === 0 && audioTracks.length > 0;
+        localStreamRef.current = local;
 
         if (localVideoRef.current) {
-          localVideoRef.current.srcObject = s;
+          localVideoRef.current.srcObject = local;
           localVideoRef.current.play?.().catch(() => {});
         }
 
-        peer = new RTCPeerConnection(RTC_CONFIG);
+        peer = new RTCPeerConnection({
+          iceServers: [
+            { urls: ["stun:stun.l.google.com:19302"] },
+            { urls: ["stun:stun1.l.google.com:19302"] },
+            { urls: ["stun:stun2.l.google.com:19302"] },
+            // add your TURN here for production
+          ],
+          iceCandidatePoolSize: 8,
+        });
         setPc(peer);
 
-        // Helpful logs/state
-        peer.oniceconnectionstatechange = () => {
-          console.log("iceConnectionState:", peer.iceConnectionState);
-        };
-        peer.onconnectionstatechange = () => {
-          console.log("connectionState:", peer.connectionState);
-          const st = peer.connectionState;
-          if (st === "connected") setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
-          else if (st === "connecting") setStatus("Connecting…");
-          else if (st === "disconnected" || st === "failed") setStatus("Disconnected");
-        };
-        peer.onsignalingstatechange = () => {
-          console.log("signalingState:", peer.signalingState);
-        };
-        peer.onicegatheringstatechange = () => {
-          console.log("iceGatheringState:", peer.iceGatheringState);
-        };
-        peer.addEventListener("icecandidateerror", (e) => {
-          console.warn("icecandidateerror", e.url, e.errorCode, e.errorText);
-        });
-
-        // Make sure both sides are ready to send/receive
+        // transceivers help browsers that are picky about recvonly tracks
         try {
           peer.addTransceiver("audio", { direction: "sendrecv" });
           peer.addTransceiver("video", { direction: "sendrecv" });
         } catch {}
 
-        // Send our local tracks
-        s.getTracks().forEach((t) => peer.addTrack(t, s));
+        // send our tracks
+        local.getTracks().forEach((t) => peer.addTrack(t, local));
 
-        // Receive remote tracks (robust approach)
+        // receive remote tracks — always attach to our own inbound stream
         peer.ontrack = (ev) => {
-          // If the stream object is provided, prefer attaching it directly
-          const s0 = ev.streams && ev.streams[0];
-          if (s0) {
-            if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== s0) {
-              remoteVideoRef.current.srcObject = s0;
-            }
-          } else if (ev.track) {
-            // fallback: build a stream from the track
-            const exists = remoteStream.getTracks().some((t) => t.id === ev.track.id);
-            if (!exists) remoteStream.addTrack(ev.track);
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = remoteStream;
-            }
-          }
-
-          // Ensure autoplay by keeping it muted initially
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.muted = remoteMuted;
-            remoteVideoRef.current.play?.()
-              .then(() => setNeedsTap(false))
-              .catch(() => setNeedsTap(true));
-          }
-
-          // If the browser delays frames until unmuted, kick when unmuted
           if (ev.track) {
-            ev.track.onunmute = () => {
-              const v = remoteVideoRef.current;
-              if (v && v.srcObject && v.paused) {
-                v.play?.().catch(() => setNeedsTap(true));
-              }
-            };
+            const exists = inboundRef.current.getTracks().some((t) => t.id === ev.track.id);
+            if (!exists) inboundRef.current.addTrack(ev.track);
           }
+          if (remoteVideoRef.current) {
+            // force a fresh assignment to bump some browsers
+            remoteVideoRef.current.srcObject = null;
+            remoteVideoRef.current.srcObject = inboundRef.current;
+            remoteVideoRef.current.muted = remoteMuted; // start muted for autoplay
+            startRemotePlayback().then(ensureFirstFrame);
+          }
+          // make sure we kick when the first data flows
+          ev.track.onunmute = () => startRemotePlayback();
+        };
+
+        // status hints
+        peer.onconnectionstatechange = () => {
+          const st = peer.connectionState;
+          if (st === "connected") setStatus("Connected");
+          else if (st === "connecting") setStatus("Connecting…");
+          else if (st === "disconnected" || st === "failed") setStatus("Disconnected");
         };
 
         const tid = threadId;
@@ -256,21 +228,8 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           peer.onicecandidate = async (e) => {
             if (!e.candidate) return;
             try {
-              const obj = e.candidate.toJSON ? e.candidate.toJSON() : {
-                candidate: e.candidate.candidate,
-                sdpMid: e.candidate.sdpMid,
-                sdpMLineIndex: e.candidate.sdpMLineIndex,
-                usernameFragment: e.candidate.usernameFragment,
-              };
-              await addDoc(callerCandCol, {
-                ...obj,
-                createdAt: serverTimestamp(),
-                from: "caller",
-              });
-              console.log("sent ICE (caller)", candType(e.candidate.candidate));
-            } catch (err) {
-              console.error("failed to write caller ICE", err);
-            }
+              await addDoc(callerCandCol, { ...e.candidate.toJSON?.(), createdAt: serverTimestamp(), from: "caller" });
+            } catch {}
           };
 
           const unsubAns = onSnapshot(callDoc, async (snap) => {
@@ -278,15 +237,9 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
             try {
               if (data?.answer && !peer.remoteDescription) {
                 await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-                setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
               }
-              if (data?.status === "ended") {
-                setStatus("Ended");
-                cleanup();
-              }
-            } catch (err) {
-              console.error("apply answer failed", err);
-            }
+              if (data?.status === "ended") cleanup();
+            } catch {}
           });
 
           const unsubCalleeC = onSnapshot(collection(callDoc, "calleeCandidates"), async (ss) => {
@@ -294,18 +247,13 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
               if (ch.type !== "added") continue;
               const c = ch.doc.data();
               try {
-                await peer.addIceCandidate(
-                  new RTCIceCandidate({
-                    candidate: c.candidate,
-                    sdpMid: c.sdpMid ?? null,
-                    sdpMLineIndex: c.sdpMLineIndex ?? null,
-                    usernameFragment: c.usernameFragment ?? null,
-                  })
-                );
-                console.log("added remote ICE (callee)", candType(c.candidate));
-              } catch (err) {
-                console.warn("addIceCandidate (callee) failed", err, c);
-              }
+                await peer.addIceCandidate(new RTCIceCandidate({
+                  candidate: c.candidate,
+                  sdpMid: c.sdpMid ?? null,
+                  sdpMLineIndex: c.sdpMLineIndex ?? null,
+                  usernameFragment: c.usernameFragment ?? null,
+                }));
+              } catch {}
             }
           });
 
@@ -318,138 +266,78 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           peer.onicecandidate = async (e) => {
             if (!e.candidate) return;
             try {
-              const obj = e.candidate.toJSON ? e.candidate.toJSON() : {
-                candidate: e.candidate.candidate,
-                sdpMid: e.candidate.sdpMid,
-                sdpMLineIndex: e.candidate.sdpMLineIndex,
-                usernameFragment: e.candidate.usernameFragment,
-              };
-              await addDoc(calleeCandCol, {
-                ...obj,
-                createdAt: serverTimestamp(),
-                from: "callee",
-              });
-              console.log("sent ICE (callee)", candType(e.candidate.candidate));
-            } catch (err) {
-              console.error("failed to write callee ICE", err);
-            }
+              await addDoc(calleeCandCol, { ...e.candidate.toJSON?.(), createdAt: serverTimestamp(), from: "callee" });
+            } catch {}
           };
 
           const callSnap = await getDoc(callDoc);
           const data = callSnap.data();
           if (data?.offer && !peer.remoteDescription) {
-            try {
-              await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
-              console.log("callee applied offer");
-            } catch (err) {
-              console.error("setRemoteDescription(offer) failed", err);
-            }
+            try { await peer.setRemoteDescription(new RTCSessionDescription(data.offer)); } catch {}
           }
 
           let answer = await peer.createAnswer();
           answer = { type: answer.type, sdp: preferVideoCodec(answer.sdp, "VP8") };
           await peer.setLocalDescription(answer);
-          await updateDoc(callDoc, {
-            answer,
-            status: "in-call",
-          });
-          setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
+          await updateDoc(callDoc, { answer, status: "in-call" });
 
           const unsubCallerC = onSnapshot(collection(callDoc, "callerCandidates"), async (ss) => {
             for (const ch of ss.docChanges()) {
               if (ch.type !== "added") continue;
               const c = ch.doc.data();
               try {
-                await peer.addIceCandidate(
-                  new RTCIceCandidate({
-                    candidate: c.candidate,
-                    sdpMid: c.sdpMid ?? null,
-                    sdpMLineIndex: c.sdpMLineIndex ?? null,
-                    usernameFragment: c.usernameFragment ?? null,
-                  })
-                );
-                console.log("added remote ICE (caller)", candType(c.candidate));
-              } catch (err) {
-                console.warn("addIceCandidate (caller) failed", err, c);
-              }
+                await peer.addIceCandidate(new RTCIceCandidate({
+                  candidate: c.candidate,
+                  sdpMid: c.sdpMid ?? null,
+                  sdpMLineIndex: c.sdpMLineIndex ?? null,
+                  usernameFragment: c.usernameFragment ?? null,
+                }));
+              } catch {}
             }
           });
 
           const unsubDoc = onSnapshot(callDoc, (snap) => {
             const d = snap.data();
-            if (d?.status === "ended") {
-              setStatus("Ended");
-              cleanup();
-            }
+            if (d?.status === "ended") cleanup();
           });
 
           watchUnsubsRef.current = [unsubCallerC, unsubDoc];
         }
 
-        // Optional: print selected ICE pair
-        setTimeout(async () => {
-          try {
-            const stats = await peer.getStats();
-            stats.forEach((r) => {
-              if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
-                const l = stats.get(r.localCandidateId);
-                const rmt = stats.get(r.remoteCandidateId);
-                console.log("Selected pair:", {
-                  local: l && { type: l.candidateType, protocol: l.protocol, ip: l.ip || l.address },
-                  remote: rmt && { type: rmt.candidateType, protocol: rmt.protocol, ip: rmt.ip || rmt.address },
-                });
-              }
-            });
-          } catch {}
-        }, 8000);
-
         function cleanup() {
           try { watchUnsubsRef.current.forEach((u) => u && u()); } catch {}
           watchUnsubsRef.current = [];
           try { peer.close(); } catch {}
-          try { s.getTracks().forEach((t) => t.stop()); } catch {}
+          try { localStreamRef.current?.getTracks?.().forEach((t) => t.stop()); } catch {}
+          inboundRef.current = new MediaStream();
           setPc(null);
-          if (onClose) onClose();
+          onClose?.();
         }
 
         return () => {
           stopped = true;
-          try { watchUnsubsRef.current.forEach((u) => u && u()); } catch {}
-          try { peer && peer.close(); } catch {}
-          try { localStream && localStream.getTracks().forEach((t) => t.stop()); } catch {}
-          watchUnsubsRef.current = [];
-          setPc(null);
+          cleanup();
         };
       } catch (e) {
         console.error("Video setup error", e);
         if (e?.name === "NotFoundError" || e?.code === "NO_DEVICES") {
-          alert(
-            `No camera/microphone was found.
-
-Quick checks:
-• Connect a webcam or unmute your laptop mic.
-• macOS: System Settings → Privacy & Security → Camera/Microphone → allow your browser.
-• Windows: Settings → Privacy → Camera/Microphone → allow apps.
-• Browser: Click the lock icon → allow Camera & Microphone.
-• Close apps that may be using the camera (Zoom/Teams).`
-          );
+          alert("No camera/microphone was found on this device.");
         } else if (e?.name === "NotAllowedError") {
-          alert("Permission denied. Please allow camera & microphone in the browser site settings and try again.");
+          alert("Permission denied. Allow camera & mic and try again.");
         } else if (e?.code === "MEDIA_API_UNAVAILABLE") {
-          alert("This browser/page doesn’t allow getUserMedia. Use HTTPS or http://localhost.");
+          alert("This page doesn’t allow getUserMedia. Use HTTPS or http://localhost.");
         } else {
-          alert("Could not start your camera/microphone. See console for details.");
+          alert("Could not start camera/microphone. See console for details.");
         }
-        if (onClose) onClose();
+        onClose?.();
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, remoteMuted]);
+  }, [open, role, me, peerId, threadId, incoming, onClose, remoteMuted]);
 
   async function hangUp() {
     setStatus("Ending…");
     try { if (callDocRef) await updateDoc(callDocRef, { status: "ended" }); } catch {}
-    if (onClose) onClose();
+    onClose?.();
   }
 
   if (!open) return null;
@@ -462,7 +350,7 @@ Quick checks:
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, padding: 10 }}>
-          {/* Remote tile with autoplay overlay and mute toggle */}
+          {/* Remote tile */}
           <div style={{ position: "relative" }}>
             <video
               ref={remoteVideoRef}
@@ -470,36 +358,20 @@ Quick checks:
               playsInline
               muted={remoteMuted}
               style={{ width: "100%", height: 420, background: "#000", borderRadius: 10 }}
-              onLoadedMetadata={() => {
-                remoteVideoRef.current?.play?.().catch(() => setNeedsTap(true));
-              }}
+              onLoadedMetadata={() => startRemotePlayback()}
             />
             {needsTap && (
               <button
-                onClick={() => {
-                  remoteVideoRef.current?.play?.().then(() => setNeedsTap(false)).catch(() => {});
-                }}
-                style={{
-                  position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                  background: "rgba(0,0,0,.45)", border: "none", color: "#fff", fontWeight: 800, fontSize: 16,
-                  borderRadius: 10, cursor: "pointer"
-                }}
+                onClick={() => startRemotePlayback()}
+                style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,.45)", border: "none", color: "#fff", fontWeight: 800, fontSize: 16, borderRadius: 10, cursor: "pointer" }}
                 title="Start remote video"
               >
                 Click to start video
               </button>
             )}
             <button
-              onClick={() => {
-                setRemoteMuted((m) => !m);
-                // try to (re)play after unmuting
-                setTimeout(() => remoteVideoRef.current?.play?.().catch(() => setNeedsTap(true)), 0);
-              }}
-              style={{
-                position: "absolute", right: 10, bottom: 10, border: "none",
-                background: "rgba(0,0,0,.55)", color: "#fff", padding: "6px 10px",
-                borderRadius: 8, cursor: "pointer", fontWeight: 700
-              }}
+              onClick={() => { setRemoteMuted((m) => !m); setTimeout(() => startRemotePlayback(), 0); }}
+              style={{ position: "absolute", right: 10, bottom: 10, border: "none", background: "rgba(0,0,0,.55)", color: "#fff", padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontWeight: 700 }}
               title={remoteMuted ? "Unmute" : "Mute"}
             >
               {remoteMuted ? "Unmute" : "Mute"}
@@ -507,13 +379,7 @@ Quick checks:
           </div>
 
           {/* Local mirror */}
-          <video
-            ref={localVideoRef}
-            autoPlay
-            playsInline
-            muted
-            style={{ width: "100%", height: 420, background: "#000", borderRadius: 10, transform: "scaleX(-1)" }}
-          />
+          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: "100%", height: 420, background: "#000", borderRadius: 10, transform: "scaleX(-1)" }} />
         </div>
 
         <div style={{ padding: 10, display: "flex", gap: 8, justifyContent: "flex-end", background: "#0f1a1d" }}>
@@ -525,6 +391,7 @@ Quick checks:
     </div>
   );
 }
+
 
 export default function Messages() {
   const params = useParams();
