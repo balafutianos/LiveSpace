@@ -1,4 +1,4 @@
-// Messages.jsx (full, with receive-only fallback + quick-call from list)
+// Messages.jsx (full)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -17,7 +17,7 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
-// OPTIONAL: only if you added the emoji keyboard files.
+// OPTIONAL: only if you added the emoji keyboard files I gave you.
 // If you didn't add them yet, comment the next line.
 import EmojiKeyboard from "./EmojiKeyboard";
 
@@ -33,9 +33,8 @@ function threadIdFor(a, b) {
   return `${x}_${y}`;
 }
 
-/* =======================
-   WebRTC configuration
-   ======================= */
+// ---- WebRTC config ----
+// Flip FORCE_TURN to true *temporarily* to prove TURN fixes your "failed" state.
 const FORCE_TURN = false;
 
 const RTC_CONFIG = {
@@ -44,10 +43,10 @@ const RTC_CONFIG = {
     { urls: ["stun:stun.l.google.com:19302"] },
     { urls: ["stun:stun1.l.google.com:19302"] },
     { urls: ["stun:stun2.l.google.com:19302"] },
-    // ✅ TURN (replace with a real server + creds)
-    // { urls: "turn:your.turn.host:3478?transport=udp", username: "USER", credential: "PASS" },
-    // { urls: "turn:your.turn.host:3478?transport=tcp", username: "USER", credential: "PASS" },
-    // { urls: "turns:your.turn.host:5349?transport=tcp", username: "USER", credential: "PASS" },
+    // ✅ TURN (replace with your server + creds; include UDP and TCP/TLS)
+    // { urls: "turn:turn.YOUR_DOMAIN.com:3478?transport=udp", username: "USER", credential: "PASS" },
+    // { urls: "turn:turn.YOUR_DOMAIN.com:3478?transport=tcp", username: "USER", credential: "PASS" },
+    // { urls: "turns:turn.YOUR_DOMAIN.com:5349?transport=tcp", username: "USER", credential: "PASS" },
   ],
   ...(FORCE_TURN ? { iceTransportPolicy: "relay" } : {}),
   iceCandidatePoolSize: 8,
@@ -63,17 +62,14 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
   const [callDocRef, setCallDocRef] = useState(null);
   const watchUnsubsRef = useRef([]);
 
+  // HTTPS hint (gUM requires secure origin, except localhost)
   useEffect(() => {
     if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
       console.warn("Tip: Use HTTPS (or localhost) for getUserMedia.");
     }
   }, []);
 
-  function candType(s) {
-    const m = / typ (\w+) /i.exec(s || "");
-    return m ? m[1] : "unknown";
-  }
-
+  // Smart media getter: detects devices and falls back to audio-only if needed
   async function getMediaSmart() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       const err = new Error("MEDIA_API_UNAVAILABLE");
@@ -87,7 +83,9 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
       const devices = await navigator.mediaDevices.enumerateDevices();
       hasCam = devices.some((d) => d.kind === "videoinput");
       hasMic = devices.some((d) => d.kind === "audioinput");
-    } catch {}
+    } catch {
+      // If enumerateDevices fails, proceed and let gUM decide.
+    }
 
     if (!hasCam && !hasMic) {
       const err = new Error("NO_DEVICES");
@@ -103,7 +101,10 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
     try {
       return await navigator.mediaDevices.getUserMedia(constraints);
     } catch (e) {
-      if (hasMic) return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      // Retry audio-only if camera fails but mic exists
+      if (hasMic) {
+        return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+      }
       throw e;
     }
   }
@@ -116,36 +117,32 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
 
     (async () => {
       try {
-        // ---- MEDIA ----
-        let s = null;
-        try {
-          s = await getMediaSmart();
-          if (stopped) return;
-          setLocalStream(s);
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = s;
-            localVideoRef.current.play?.().catch(() => {});
-          }
-        } catch (e) {
-          console.warn("No local devices; switching to receive-only mode", e);
-        }
+        // ---- SMART MEDIA ----
+        const s = await getMediaSmart();
+        if (stopped) return;
+        setLocalStream(s);
 
-        const audioTracks = s?.getAudioTracks?.() || [];
-        const videoTracks = s?.getVideoTracks?.() || [];
-        const audioOnly = !!s && videoTracks.length === 0 && audioTracks.length > 0;
-        const recvOnly = !s;
+        const audioTracks = s.getAudioTracks();
+        const videoTracks = s.getVideoTracks();
+        const audioOnly = videoTracks.length === 0 && audioTracks.length > 0;
+
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = s;
+          // help some browsers start playback
+          localVideoRef.current.play?.().catch(() => {});
+        }
 
         peer = new RTCPeerConnection(RTC_CONFIG);
         setPc(peer);
 
+        // helpful logs/state → easier to debug
         peer.oniceconnectionstatechange = () => {
           console.log("iceConnectionState:", peer.iceConnectionState);
         };
         peer.onconnectionstatechange = () => {
           console.log("connectionState:", peer.connectionState);
           const st = peer.connectionState;
-          const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
-          if (st === "connected") setStatus("Connected" + suffix);
+          if (st === "connected") setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
           else if (st === "connecting") setStatus("Connecting…");
           else if (st === "disconnected" || st === "failed") setStatus("Disconnected");
         };
@@ -155,33 +152,40 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
         peer.onicegatheringstatechange = () => {
           console.log("iceGatheringState:", peer.iceGatheringState);
         };
-        peer.addEventListener("icecandidateerror", (e) => {
-          console.warn("icecandidateerror", e.url, e.errorCode, e.errorText);
-        });
 
-        try { peer.addTransceiver("audio", { direction: s ? "sendrecv" : "recvonly" }); } catch {}
-        try { peer.addTransceiver("video", { direction: s ? "sendrecv" : "recvonly" }); } catch {}
+        // Ensure we can receive even if the other side toggles tracks
+        try {
+          peer.addTransceiver("audio", { direction: "sendrecv" });
+          peer.addTransceiver("video", { direction: "sendrecv" });
+        } catch {
+          /* older browsers ignore */
+        }
 
-        if (s) s.getTracks().forEach((t) => peer.addTrack(t, s));
+        // local tracks
+        s.getTracks().forEach((t) => peer.addTrack(t, s));
 
+        // remote tracks
         peer.ontrack = (ev) => {
-          if (ev.track) {
-            const exists = remoteStream.getTracks().some((t) => t.id === ev.track.id);
-            if (!exists) remoteStream.addTrack(ev.track);
-          }
-          const firstStream = ev.streams && ev.streams[0];
-          if (firstStream) {
-            firstStream.getTracks().forEach((t) => {
-              const exists = remoteStream.getTracks().some((x) => x.id === t.id);
-              if (!exists) remoteStream.addTrack(t);
-            });
-          }
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteStream;
-            remoteVideoRef.current.play?.().catch(() => {});
-          }
-        };
+  // Prefer the single track directly
+  if (ev.track) {
+    const already = remoteStream.getTracks().some((t) => t.id === ev.track.id);
+    if (!already) remoteStream.addTrack(ev.track);
+  }
 
+  // Also handle the case where the stream array is present
+  const firstStream = (ev.streams && ev.streams[0]) ? ev.streams[0] : null;
+  if (firstStream) {
+    firstStream.getTracks().forEach((t) => {
+      const already = remoteStream.getTracks().some((x) => x.id === t.id);
+      if (!already) remoteStream.addTrack(t);
+    });
+  }
+
+  if (remoteVideoRef.current) {
+    remoteVideoRef.current.srcObject = remoteStream;
+    remoteVideoRef.current.play?.().catch(() => {}); // nudge autoplay
+  }
+};
         const tid = threadId;
 
         if (role === "caller") {
@@ -202,24 +206,26 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           peer.onicecandidate = async (e) => {
             if (!e.candidate) return;
             try {
+              // Save FULL candidate object (toJSON has candidate/sdpMid/sdpMLineIndex/usernameFragment)
               await addDoc(callerCandCol, {
                 ...e.candidate.toJSON?.(),
                 createdAt: serverTimestamp(),
                 from: "caller",
               });
-              console.log("sent ICE (caller)", candType(e.candidate.candidate));
+              console.log("sent ICE (caller)");
             } catch (err) {
               console.error("failed to write caller ICE", err);
             }
           };
 
+          // watch answer + ended
           const unsubAns = onSnapshot(callDoc, async (snap) => {
             const data = snap.data();
             try {
+              // IMPORTANT FIX: use peer.remoteDescription (not currentRemoteDescription)
               if (data?.answer && !peer.remoteDescription) {
                 await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-                const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
-                setStatus("Connected" + suffix);
+                setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
               }
               if (data?.status === "ended") {
                 setStatus("Ended");
@@ -230,6 +236,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
             }
           });
 
+          // watch callee ICE
           const unsubCalleeC = onSnapshot(collection(callDoc, "calleeCandidates"), async (ss) => {
             for (const ch of ss.docChanges()) {
               if (ch.type !== "added") continue;
@@ -243,7 +250,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
                     usernameFragment: c.usernameFragment ?? null,
                   })
                 );
-                console.log("added remote ICE (callee)", candType(c.candidate));
+                console.log("added remote ICE (callee)");
               } catch (err) {
                 console.warn("addIceCandidate (callee) failed", err, c);
               }
@@ -264,12 +271,13 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
                 createdAt: serverTimestamp(),
                 from: "callee",
               });
-              console.log("sent ICE (callee)", candType(e.candidate.candidate));
+              console.log("sent ICE (callee)");
             } catch (err) {
               console.error("failed to write callee ICE", err);
             }
           };
 
+          // set remote offer (guard against double-apply)
           const callSnap = await getDoc(callDoc);
           const data = callSnap.data();
           if (data?.offer && !peer.remoteDescription) {
@@ -281,15 +289,16 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
             }
           }
 
+          // create & send answer
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
           await updateDoc(callDoc, {
             answer: { type: answer.type, sdp: answer.sdp },
             status: "in-call",
           });
-          const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
-          setStatus("Connected" + suffix);
+          setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
 
+          // watch caller ICE
           const unsubCallerC = onSnapshot(collection(callDoc, "callerCandidates"), async (ss) => {
             for (const ch of ss.docChanges()) {
               if (ch.type !== "added") continue;
@@ -303,13 +312,14 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
                     usernameFragment: c.usernameFragment ?? null,
                   })
                 );
-                console.log("added remote ICE (caller)", candType(c.candidate));
+                console.log("added remote ICE (caller)");
               } catch (err) {
                 console.warn("addIceCandidate (caller) failed", err, c);
               }
             }
           });
 
+          // watch ended
           const unsubDoc = onSnapshot(callDoc, (snap) => {
             const d = snap.data();
             if (d?.status === "ended") {
@@ -321,36 +331,33 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           watchUnsubsRef.current = [unsubCallerC, unsubDoc];
         }
 
-        setTimeout(async () => {
-          try {
-            const stats = await peer.getStats();
-            stats.forEach((r) => {
-              if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
-                const l = stats.get(r.localCandidateId);
-                const rmt = stats.get(r.remoteCandidateId);
-                console.log("Selected pair:", {
-                  local: l && { type: l.candidateType, protocol: l.protocol, ip: l.ip },
-                  remote: rmt && { type: rmt.candidateType, protocol: rmt.protocol, ip: rmt.ip },
-                });
-              }
-            });
-          } catch {}
-        }, 8000);
-
         function cleanup() {
-          try { watchUnsubsRef.current.forEach((u) => u && u()); } catch {}
+          try {
+            watchUnsubsRef.current.forEach((u) => u && u());
+          } catch {}
           watchUnsubsRef.current = [];
-          try { peer.close(); } catch {}
-          try { s && s.getTracks().forEach((t) => t.stop()); } catch {}
+          try {
+            peer.close();
+          } catch {}
+          try {
+            s.getTracks().forEach((t) => t.stop());
+          } catch {}
           setPc(null);
           if (onClose) onClose();
         }
 
+        // unmount / close
         return () => {
           stopped = true;
-          try { watchUnsubsRef.current.forEach((u) => u && u()); } catch {}
-          try { peer && peer.close(); } catch {}
-          try { localStream && localStream.getTracks().forEach((t) => t.stop()); } catch {}
+          try {
+            watchUnsubsRef.current.forEach((u) => u && u());
+          } catch {}
+          try {
+            peer && peer.close();
+          } catch {}
+          try {
+            localStream && localStream.getTracks().forEach((t) => t.stop());
+          } catch {}
           watchUnsubsRef.current = [];
           setPc(null);
         };
@@ -358,7 +365,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
         console.error("Video setup error", e);
         if (e?.name === "NotFoundError" || e?.code === "NO_DEVICES") {
           alert(
-`No camera/microphone was found.
+            `No camera/microphone was found.
 
 Quick checks:
 • Connect a webcam or unmute your laptop mic.
@@ -390,18 +397,68 @@ Quick checks:
 
   if (!open) return null;
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
-      <div style={{ width: 860, maxWidth: "95vw", background: "#0b1215", color: "#fff", borderRadius: 12, overflow: "hidden", boxShadow: "0 10px 40px rgba(0,0,0,.4)" }}>
-        <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0f1a1d" }}>
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+      }}
+    >
+      <div
+        style={{
+          width: 860,
+          maxWidth: "95vw",
+          background: "#0b1215",
+          color: "#fff",
+          borderRadius: 12,
+          overflow: "hidden",
+          boxShadow: "0 10px 40px rgba(0,0,0,.4)",
+        }}
+      >
+        <div
+          style={{
+            padding: "10px 14px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            background: "#0f1a1d",
+          }}
+        >
           <strong>Video call</strong>
-          <span style={{ opacity: .8 }}>{status}</span>
+          <span style={{ opacity: 0.8 }}>{status}</span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, padding: 10 }}>
-          <video ref={remoteVideoRef} autoPlay playsInline style={{ width: "100%", height: 420, background: "#000", borderRadius: 10 }} />
-          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: "100%", height: 420, background: "#000", borderRadius: 10, transform: "scaleX(-1)" }} />
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            style={{ width: "100%", height: 420, background: "#000", borderRadius: 10 }}
+          />
+          <video
+            ref={localVideoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{ width: "100%", height: 420, background: "#000", borderRadius: 10, transform: "scaleX(-1)" }}
+          />
         </div>
         <div style={{ padding: 10, display: "flex", gap: 8, justifyContent: "flex-end", background: "#0f1a1d" }}>
-          <button onClick={hangUp} style={{ background: "#ff4d4f", color: "#fff", border: "none", padding: "8px 12px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>
+          <button
+            onClick={hangUp}
+            style={{
+              background: "#ff4d4f",
+              color: "#fff",
+              border: "none",
+              padding: "8px 12px",
+              borderRadius: 8,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
             Hang up
           </button>
         </div>
@@ -418,9 +475,6 @@ export default function Messages() {
 
   // who we're chatting with (from /messages/:uid)
   const peerId = params.uid || null;
-
-  // NEW: explicit call target (lets you start a call from the left list)
-  const [callPeerId, setCallPeerId] = useState(null);
 
   // left pane: all my threads
   const [threads, setThreads] = useState([]);
@@ -525,6 +579,7 @@ export default function Messages() {
   const peer = useMemo(() => userCache[peerId] || null, [userCache, peerId]);
 
   useEffect(() => {
+    // fetch peer on enter if missing
     (async () => {
       if (!peerId || userCache[peerId]) return;
       const us = await getDoc(doc(db, "Users", peerId));
@@ -551,7 +606,9 @@ export default function Messages() {
     (async () => {
       try {
         await updateDoc(tRef, { [`unread.${me}`]: 0 });
-      } catch {}
+      } catch {
+        /* ignore */
+      }
     })();
   }, [me, peerId]);
 
@@ -658,9 +715,7 @@ export default function Messages() {
     <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", height: "calc(100vh - 60px)" }}>
       {/* LEFT: Conversations list */}
       <aside style={{ borderRight: "1px solid #eee", overflowY: "auto", background: "#fafbfc" }}>
-        <div style={{ padding: "12px 12px 8px", fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span>Conversations</span>
-        </div>
+        <div style={{ padding: "12px 12px 8px", fontWeight: 700 }}>Conversations</div>
         {myThreads.length === 0 ? (
           <div style={{ padding: 12, color: "#666" }}>No conversations yet.</div>
         ) : (
@@ -673,100 +728,66 @@ export default function Messages() {
                 ? new Date(t.lastAt.toMillis()).toLocaleTimeString()
                 : "";
             return (
-              <div
+              <button
                 key={t.id}
+                onClick={() => navigate(`/messages/${other}`)}
                 style={{
                   display: "flex",
                   width: "100%",
                   gap: 10,
                   padding: "10px 12px",
+                  border: "none",
                   background: other === peerId ? "#eef7ff" : "#fff",
                   borderBottom: "1px solid #f1f1f1",
-                  alignItems: "center",
+                  cursor: "pointer",
+                  textAlign: "left",
                 }}
               >
-                <button
-                  onClick={() => navigate(`/messages/${other}`)}
-                  style={{
-                    display: "flex",
-                    flex: 1,
-                    gap: 10,
-                    border: "none",
-                    background: "transparent",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    padding: 0,
-                  }}
-                  title={`Open chat with ${meta.name || "User"}`}
-                >
-                  <img
-                    src={meta.photo || FALLBACK_IMAGE}
-                    alt=""
-                    style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <strong
-                        style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                      >
-                        {meta.name || "User"}
-                      </strong>
-                      <small style={{ color: "#666" }}>{timeLabel}</small>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <img
+                  src={meta.photo || FALLBACK_IMAGE}
+                  alt=""
+                  style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <strong
+                      style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                    >
+                      {meta.name || "User"}
+                    </strong>
+                    <small style={{ color: "#666" }}>{timeLabel}</small>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "#555",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        maxWidth: 180,
+                      }}
+                    >
+                      {t.lastText || "New conversation"}
+                    </span>
+                    {!!unread && (
                       <span
                         style={{
+                          marginLeft: "auto",
+                          background: "red",
+                          color: "#fff",
+                          borderRadius: 999,
+                          padding: "0 6px",
                           fontSize: 12,
-                          color: "#555",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          maxWidth: 160,
+                          fontWeight: 700,
                         }}
                       >
-                        {t.lastText || "New conversation"}
+                        {unread}
                       </span>
-                      {!!unread && (
-                        <span
-                          style={{
-                            marginLeft: "auto",
-                            background: "red",
-                            color: "#fff",
-                            borderRadius: 999,
-                            padding: "0 6px",
-                            fontSize: 12,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {unread}
-                        </span>
-                      )}
-                    </div>
+                    )}
                   </div>
-                </button>
-
-                {/* NEW: quick video call button */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCallPeerId(other);
-                    setShowCall(true);
-                  }}
-                  title="Start video call"
-                  style={{
-                    border: "none",
-                    background: "#27D496",
-                    color: "#052023",
-                    borderRadius: 8,
-                    padding: "8px 10px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  📹
-                </button>
-              </div>
+                </div>
+              </button>
             );
           })
         )}
@@ -797,51 +818,66 @@ export default function Messages() {
               {peerId && <small style={{ color: "#666" }}>Chat with {peer?.name || peerId}</small>}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {incomingCall ? (
-              <>
+          {peerId && (
+            <div style={{ display: "flex", gap: 8 }}>
+              {incomingCall ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCall(true);
+                    }}
+                    style={{
+                      border: "none",
+                      background: "#27D496",
+                      color: "#052023",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Accept video
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await updateDoc(doc(db, incomingCall.callPath), { status: "ended" });
+                      } catch {}
+                      setIncomingCall(null);
+                    }}
+                    style={{
+                      border: "1px solid #ddd",
+                      background: "#fff",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Decline
+                  </button>
+                </>
+              ) : (
                 <button
                   type="button"
                   onClick={() => setShowCall(true)}
-                  style={{ border: "none", background: "#27D496", color: "#052023", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
-                >
-                  Accept video
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try { await updateDoc(doc(db, incomingCall.callPath), { status: "ended" }); } catch {}
-                    setIncomingCall(null);
+                  title="Start video call"
+                  style={{
+                    border: "none",
+                    background: "#27D496",
+                    color: "#052023",
+                    borderRadius: 8,
+                    padding: "8px 12px",
+                    fontWeight: 700,
+                    cursor: "pointer",
                   }}
-                  style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 8, padding: "8px 12px", cursor: "pointer" }}
                 >
-                  Decline
+                  Start video
                 </button>
-              </>
-            ) : peerId ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setCallPeerId(peerId);
-                  setShowCall(true);
-                }}
-                title="Start video call"
-                style={{ border: "none", background: "#27D496", color: "#052023", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
-              >
-                Start video
-              </button>
-            ) : (
-              // Disabled look if no conversation open
-              <button
-                type="button"
-                disabled
-                title="Pick a conversation to start a video call"
-                style={{ border: "1px solid #ddd", background: "#fff", color: "#999", borderRadius: 8, padding: "8px 12px", cursor: "not-allowed" }}
-              >
-                Start video
-              </button>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Messages list */}
@@ -909,7 +945,14 @@ export default function Messages() {
                 type="button"
                 onClick={() => setShowEmoji((v) => !v)}
                 title="Emoji"
-                style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 8, padding: "0 10px", fontSize: 18, cursor: "pointer" }}
+                style={{
+                  border: "1px solid #ddd",
+                  background: "#fff",
+                  borderRadius: 8,
+                  padding: "0 10px",
+                  fontSize: 18,
+                  cursor: "pointer",
+                }}
               >
                 😊
               </button>
@@ -917,7 +960,15 @@ export default function Messages() {
               <button
                 type="button"
                 onClick={send}
-                style={{ border: "none", background: "#27D496", color: "#052023", borderRadius: 8, padding: "8px 14px", fontWeight: 700, cursor: "pointer" }}
+                style={{
+                  border: "none",
+                  background: "#27D496",
+                  color: "#052023",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
               >
                 Send
               </button>
@@ -925,7 +976,10 @@ export default function Messages() {
               {showEmoji && (
                 <div style={{ position: "absolute", right: 110, bottom: 46 }}>
                   <EmojiKeyboard
-                    onPick={(emoji) => { insertAtCursor(emoji); setShowEmoji(false); }}
+                    onPick={(emoji) => {
+                      insertAtCursor(emoji);
+                      setShowEmoji(false);
+                    }}
                     onClose={() => setShowEmoji(false)}
                     anchor="bottom-right"
                     maxPerRow={8}
@@ -935,22 +989,21 @@ export default function Messages() {
             </div>
           </div>
         ) : (
-          <div style={{ padding: 16, color: "#666" }}>Pick a conversation from the left, or hit 📹 on a user to start a call.</div>
+          <div style={{ padding: 16, color: "#666" }}>Pick a conversation from the left.</div>
         )}
 
         {/* Video modal */}
-        {(callPeerId || peerId) && (
+        {peerId && (
           <VideoCallModal
             open={showCall}
             onClose={() => {
               setShowCall(false);
               setIncomingCall(null);
-              setCallPeerId(null); // <-- reset explicit target
             }}
             role={incomingCall ? "callee" : "caller"}
             me={me}
-            peerId={callPeerId || peerId}
-            threadId={threadIdFor(me, callPeerId || peerId)}
+            peerId={peerId}
+            threadId={threadIdFor(me, peerId)}
             incoming={incomingCall}
           />
         )}
