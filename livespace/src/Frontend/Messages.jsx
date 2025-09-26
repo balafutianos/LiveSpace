@@ -1,4 +1,4 @@
-// Messages.jsx (full)
+// Messages.jsx (full, with receive-only fallback)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -17,7 +17,7 @@ import {
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
-// OPTIONAL: only if you added the emoji keyboard files I gave you.
+// OPTIONAL: only if you added the emoji keyboard files.
 // If you didn't add them yet, comment the next line.
 import EmojiKeyboard from "./EmojiKeyboard";
 
@@ -65,18 +65,18 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
   const [callDocRef, setCallDocRef] = useState(null);
   const watchUnsubsRef = useRef([]);
 
-  // Helper: candidate type for logging
-  function candType(s) {
-    const m = / typ (\w+) /i.exec(s || "");
-    return m ? m[1] : "unknown";
-  }
-
   // HTTPS hint (gUM requires secure origin, except localhost)
   useEffect(() => {
     if (window.location.protocol !== "https:" && window.location.hostname !== "localhost") {
       console.warn("Tip: Use HTTPS (or localhost) for getUserMedia.");
     }
   }, []);
+
+  // Helper: candidate type for logging
+  function candType(s) {
+    const m = / typ (\w+) /i.exec(s || "");
+    return m ? m[1] : "unknown";
+  }
 
   // Smart media getter: detects devices and falls back to audio-only if needed
   async function getMediaSmart() {
@@ -114,7 +114,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
       if (hasMic) {
         return await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
       }
-      throw e;
+      throw e; // neither mic nor cam available
     }
   }
 
@@ -126,20 +126,27 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
 
     (async () => {
       try {
-        // ---- SMART MEDIA ----
-        const s = await getMediaSmart();
-        if (stopped) return;
-        setLocalStream(s);
-
-        const audioTracks = s.getAudioTracks();
-        const videoTracks = s.getVideoTracks();
-        const audioOnly = videoTracks.length === 0 && audioTracks.length > 0;
-
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = s;
-          // help some browsers start playback
-          localVideoRef.current.play?.().catch(() => {});
+        // ---- MEDIA ACQUISITION ----
+        // We try to get local media; if it fails completely (no mic & no cam),
+        // we continue in **receive-only** mode so we can still see/hear the peer.
+        let s = null;
+        try {
+          s = await getMediaSmart();
+          if (stopped) return;
+          setLocalStream(s);
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = s;
+            localVideoRef.current.play?.().catch(() => {});
+          }
+        } catch (e) {
+          console.warn("No local devices; switching to receive-only mode", e);
+          // s stays null -> recvonly below
         }
+
+        const audioTracks = s?.getAudioTracks?.() || [];
+        const videoTracks = s?.getVideoTracks?.() || [];
+        const audioOnly = !!s && videoTracks.length === 0 && audioTracks.length > 0;
+        const recvOnly = !s;
 
         peer = new RTCPeerConnection(RTC_CONFIG);
         setPc(peer);
@@ -151,7 +158,8 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
         peer.onconnectionstatechange = () => {
           console.log("connectionState:", peer.connectionState);
           const st = peer.connectionState;
-          if (st === "connected") setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
+          const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
+          if (st === "connected") setStatus("Connected" + suffix);
           else if (st === "connecting") setStatus("Connecting…");
           else if (st === "disconnected" || st === "failed") setStatus("Disconnected");
         };
@@ -165,25 +173,26 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           console.warn("icecandidateerror", e.url, e.errorCode, e.errorText);
         });
 
-        // Ensure we can receive even if the other side toggles tracks
+        // Always declare that we want to receive A/V.
+        // If we have a local stream, we sendrecv; otherwise recvonly (pure receiver).
         try {
-          peer.addTransceiver("audio", { direction: "sendrecv" });
-          peer.addTransceiver("video", { direction: "sendrecv" });
-        } catch {
-          /* older browsers ignore */
-        }
+          peer.addTransceiver("audio", { direction: s ? "sendrecv" : "recvonly" });
+        } catch {}
+        try {
+          peer.addTransceiver("video", { direction: s ? "sendrecv" : "recvonly" });
+        } catch {}
 
-        // Local tracks
-        s.getTracks().forEach((t) => peer.addTrack(t, s));
+        // Add local tracks (if any)
+        if (s) {
+          s.getTracks().forEach((t) => peer.addTrack(t, s));
+        }
 
         // Remote tracks (robust across browsers)
         peer.ontrack = (ev) => {
-          // Add single track directly
           if (ev.track) {
-            const already = remoteStream.getTracks().some((t) => t.id === ev.track.id);
-            if (!already) remoteStream.addTrack(ev.track);
+            const exists = remoteStream.getTracks().some((t) => t.id === ev.track.id);
+            if (!exists) remoteStream.addTrack(ev.track);
           }
-          // Also copy from first stream if provided
           const firstStream = ev.streams && ev.streams[0];
           if (firstStream) {
             firstStream.getTracks().forEach((t) => {
@@ -195,6 +204,8 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
             remoteVideoRef.current.srcObject = remoteStream;
             remoteVideoRef.current.play?.().catch(() => {});
           }
+          if (ev.track?.kind === "video") console.log("Receiving remote VIDEO");
+          if (ev.track?.kind === "audio") console.log("Receiving remote AUDIO");
         };
 
         const tid = threadId;
@@ -234,7 +245,8 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
             try {
               if (data?.answer && !peer.remoteDescription) {
                 await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-                setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
+                const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
+                setStatus("Connected" + suffix);
               }
               if (data?.status === "ended") {
                 setStatus("Ended");
@@ -305,7 +317,8 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
             answer: { type: answer.type, sdp: answer.sdp },
             status: "in-call",
           });
-          setStatus(audioOnly ? "Connected (audio-only)" : "Connected");
+          const suffix = recvOnly ? " (receive-only)" : audioOnly ? " (audio-only)" : "";
+          setStatus("Connected" + suffix);
 
           // watch caller ICE
           const unsubCallerC = onSnapshot(collection(callDoc, "callerCandidates"), async (ss) => {
@@ -340,7 +353,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
           watchUnsubsRef.current = [unsubCallerC, unsubDoc];
         }
 
-        // Optional: after a few seconds, try to print selected candidate pair
+        // Optional: after a few seconds, print selected candidate pair
         setTimeout(async () => {
           try {
             const stats = await peer.getStats();
@@ -366,7 +379,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
             peer.close();
           } catch {}
           try {
-            s.getTracks().forEach((t) => t.stop());
+            s && s.getTracks().forEach((t) => t.stop());
           } catch {}
           setPc(null);
           if (onClose) onClose();
@@ -391,7 +404,7 @@ function VideoCallModal({ open, onClose, role, me, peerId, threadId, incoming })
         console.error("Video setup error", e);
         if (e?.name === "NotFoundError" || e?.code === "NO_DEVICES") {
           alert(
-            `No camera/microphone was found.
+`No camera/microphone was found.
 
 Quick checks:
 • Connect a webcam or unmute your laptop mic.
@@ -423,68 +436,18 @@ Quick checks:
 
   if (!open) return null;
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,.35)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 9999,
-      }}
-    >
-      <div
-        style={{
-          width: 860,
-          maxWidth: "95vw",
-          background: "#0b1215",
-          color: "#fff",
-          borderRadius: 12,
-          overflow: "hidden",
-          boxShadow: "0 10px 40px rgba(0,0,0,.4)",
-        }}
-      >
-        <div
-          style={{
-            padding: "10px 14px",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            background: "#0f1a1d",
-          }}
-        >
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+      <div style={{ width: 860, maxWidth: "95vw", background: "#0b1215", color: "#fff", borderRadius: 12, overflow: "hidden", boxShadow: "0 10px 40px rgba(0,0,0,.4)" }}>
+        <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0f1a1d" }}>
           <strong>Video call</strong>
-          <span style={{ opacity: 0.8 }}>{status}</span>
+          <span style={{ opacity: .8 }}>{status}</span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, padding: 10 }}>
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            style={{ width: "100%", height: 420, background: "#000", borderRadius: 10 }}
-          />
-          <video
-            ref={localVideoRef}
-            autoPlay
-            playsInline
-            muted
-            style={{ width: "100%", height: 420, background: "#000", borderRadius: 10, transform: "scaleX(-1)" }}
-          />
+          <video ref={remoteVideoRef} autoPlay playsInline style={{ width: "100%", height: 420, background: "#000", borderRadius: 10 }} />
+          <video ref={localVideoRef} autoPlay playsInline muted style={{ width: "100%", height: 420, background: "#000", borderRadius: 10, transform: "scaleX(-1)" }} />
         </div>
         <div style={{ padding: 10, display: "flex", gap: 8, justifyContent: "flex-end", background: "#0f1a1d" }}>
-          <button
-            onClick={hangUp}
-            style={{
-              background: "#ff4d4f",
-              color: "#fff",
-              border: "none",
-              padding: "8px 12px",
-              borderRadius: 8,
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={hangUp} style={{ background: "#ff4d4f", color: "#fff", border: "none", padding: "8px 12px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>
             Hang up
           </button>
         </div>
@@ -850,36 +813,18 @@ export default function Messages() {
                 <>
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowCall(true);
-                    }}
-                    style={{
-                      border: "none",
-                      background: "#27D496",
-                      color: "#052023",
-                      borderRadius: 8,
-                      padding: "8px 12px",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                    }}
+                    onClick={() => setShowCall(true)}
+                    style={{ border: "none", background: "#27D496", color: "#052023", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
                   >
                     Accept video
                   </button>
                   <button
                     type="button"
                     onClick={async () => {
-                      try {
-                        await updateDoc(doc(db, incomingCall.callPath), { status: "ended" });
-                      } catch {}
+                      try { await updateDoc(doc(db, incomingCall.callPath), { status: "ended" }); } catch {}
                       setIncomingCall(null);
                     }}
-                    style={{
-                      border: "1px solid #ddd",
-                      background: "#fff",
-                      borderRadius: 8,
-                      padding: "8px 12px",
-                      cursor: "pointer",
-                    }}
+                    style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 8, padding: "8px 12px", cursor: "pointer" }}
                   >
                     Decline
                   </button>
@@ -889,15 +834,7 @@ export default function Messages() {
                   type="button"
                   onClick={() => setShowCall(true)}
                   title="Start video call"
-                  style={{
-                    border: "none",
-                    background: "#27D496",
-                    color: "#052023",
-                    borderRadius: 8,
-                    padding: "8px 12px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
+                  style={{ border: "none", background: "#27D496", color: "#052023", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}
                 >
                   Start video
                 </button>
@@ -971,14 +908,7 @@ export default function Messages() {
                 type="button"
                 onClick={() => setShowEmoji((v) => !v)}
                 title="Emoji"
-                style={{
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  borderRadius: 8,
-                  padding: "0 10px",
-                  fontSize: 18,
-                  cursor: "pointer",
-                }}
+                style={{ border: "1px solid #ddd", background: "#fff", borderRadius: 8, padding: "0 10px", fontSize: 18, cursor: "pointer" }}
               >
                 😊
               </button>
@@ -986,15 +916,7 @@ export default function Messages() {
               <button
                 type="button"
                 onClick={send}
-                style={{
-                  border: "none",
-                  background: "#27D496",
-                  color: "#052023",
-                  borderRadius: 8,
-                  padding: "8px 14px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
+                style={{ border: "none", background: "#27D496", color: "#052023", borderRadius: 8, padding: "8px 14px", fontWeight: 700, cursor: "pointer" }}
               >
                 Send
               </button>
@@ -1002,10 +924,7 @@ export default function Messages() {
               {showEmoji && (
                 <div style={{ position: "absolute", right: 110, bottom: 46 }}>
                   <EmojiKeyboard
-                    onPick={(emoji) => {
-                      insertAtCursor(emoji);
-                      setShowEmoji(false);
-                    }}
+                    onPick={(emoji) => { insertAtCursor(emoji); setShowEmoji(false); }}
                     onClose={() => setShowEmoji(false)}
                     anchor="bottom-right"
                     maxPerRow={8}
@@ -1022,10 +941,7 @@ export default function Messages() {
         {peerId && (
           <VideoCallModal
             open={showCall}
-            onClose={() => {
-              setShowCall(false);
-              setIncomingCall(null);
-            }}
+            onClose={() => { setShowCall(false); setIncomingCall(null); }}
             role={incomingCall ? "callee" : "caller"}
             me={me}
             peerId={peerId}
