@@ -1,4 +1,3 @@
-// Messages.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -15,11 +14,12 @@ import {
   where,
   limit as qlimit,
   increment,
+  deleteDoc, // <-- ADDED
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
+import "./Messages.css";
 
 // OPTIONAL: only if you added the emoji keyboard files I gave you.
-// If you didn't add them yet, comment the next line.
 import EmojiKeyboard from "./EmojiKeyboard";
 
 const FALLBACK_IMAGE = "https://i.imgur.com/qzsiOuh.png";
@@ -78,6 +78,10 @@ async function ensureThreadDoc(meUid, otherUid) {
   return tRef;
 }
 
+async function deleteMessage(threadId, messageId) {
+  await deleteDoc(doc(db, "Messages", threadId, "Items", messageId));
+}
+
 /* ===========================
    Inline Video Call Components
    =========================== */
@@ -96,20 +100,13 @@ function CallControls({ localStreamRef }) {
   }
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div className="vc-controls">
       <button
         onClick={() => {
           toggle("video");
           setCamOn((v) => !v);
         }}
-        style={{
-          padding: "10px 12px",
-          borderRadius: 8,
-          border: "1px solid #1f2a44",
-          background: "#101a33",
-          color: "#cde3ff",
-          cursor: "pointer",
-        }}
+        className="btn btn--ghost"
       >
         {camOn ? "Turn camera off" : "Turn camera on"}
       </button>
@@ -118,14 +115,7 @@ function CallControls({ localStreamRef }) {
           toggle("audio");
           setMicOn((v) => !v);
         }}
-        style={{
-          padding: "10px 12px",
-          borderRadius: 8,
-          border: "1px solid #1f2a44",
-          background: "#101a33",
-          color: "#cde3ff",
-          cursor: "pointer",
-        }}
+        className="btn btn--ghost"
       >
         {micOn ? "Mute" : "Unmute"}
       </button>
@@ -166,7 +156,6 @@ function VideoCall({ me, peerId, onClose, incomingRef = null }) {
       }
     };
 
-    // Use the remote stream provided by the event directly (avoids black video)
     pc.ontrack = (e) => {
       if (remoteVideoRef.current && e.streams && e.streams[0]) {
         remoteVideoRef.current.srcObject = e.streams[0];
@@ -202,10 +191,8 @@ function VideoCall({ me, peerId, onClose, incomingRef = null }) {
   async function startAsCaller() {
     setStatus("ringing");
 
-    // Ensure the thread doc exists so Calls rules pass (isParticipant())
     try {
       const tRef = await ensureThreadDoc(me, peerId);
-      // Ring message visible in-thread
       await addDoc(collection(tRef, "Items"), {
         senderId: me,
         text: "📞 Calling…",
@@ -327,7 +314,6 @@ function VideoCall({ me, peerId, onClose, incomingRef = null }) {
     unsubscribers.current = [];
     stopStreams();
 
-    // Thread marker
     const label =
       reason === "declined" ? "❌ Call declined" :
       reason === "ended" ? "📴 Call ended" :
@@ -337,19 +323,16 @@ function VideoCall({ me, peerId, onClose, incomingRef = null }) {
     onClose?.();
   }
 
-  // Start once (caller or callee). StrictMode-safe silent cleanup.
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
 
     if (incomingRef) {
-      // Callee path
       startAsCallee(incomingRef).catch((e) => {
         console.error(e);
         setError(e.message || "Failed to answer");
       });
     } else {
-      // Caller path
       startAsCaller().catch((e) => {
         console.error(e);
         setError(e.message || "Failed to start call");
@@ -361,34 +344,15 @@ function VideoCall({ me, peerId, onClose, incomingRef = null }) {
       stopStreams();
       unsubscribers.current.forEach((u) => u && u());
       unsubscribers.current = [];
-      // No onClose() / status write here (StrictMode test unmount)
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingRef]);
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,.75)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 9999,
-      }}
-    >
-      <div style={{ width: 920, maxWidth: "95vw", background: "#0b1220", borderRadius: 12, overflow: "hidden" }}>
-        <div
-          style={{
-            padding: "10px 14px",
-            color: "#cde3ff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <div style={{ fontWeight: 700 }}>
+    <div className="vc-overlay">
+      <div className="vc-card">
+        <div className="vc-card__top">
+          <div className="vc-title">
             {status === "incoming"
               ? "Incoming call"
               : status === "ringing"
@@ -401,46 +365,19 @@ function VideoCall({ me, peerId, onClose, incomingRef = null }) {
               ? "Call ended"
               : "Video Call"}
           </div>
-          <button
-            onClick={() => endCall("ended")}
-            style={{
-              background: "#ff4d4f",
-              border: "none",
-              color: "#fff",
-              padding: "8px 12px",
-              borderRadius: 8,
-              cursor: "pointer",
-            }}
-          >
-            Hang up
-          </button>
+          <button onClick={() => endCall("ended")} className="btn btn--danger">Hang up</button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 240px", gap: 8, padding: 8 }}>
-          <div style={{ position: "relative", background: "#000", borderRadius: 8, overflow: "hidden", minHeight: 420 }}>
-            <video ref={remoteVideoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              style={{
-                position: "absolute",
-                right: 12,
-                bottom: 12,
-                width: 180,
-                height: 120,
-                objectFit: "cover",
-                borderRadius: 8,
-                boxShadow: "0 6px 20px rgba(0,0,0,.35)",
-              }}
-            />
+        <div className="vc-body">
+          <div className="vc-video">
+            <video ref={remoteVideoRef} autoPlay playsInline className="vc-video__remote" />
+            <video ref={localVideoRef} autoPlay muted playsInline className="vc-video__local" />
           </div>
 
-          <div style={{ color: "#cde3ff" }}>
-            <div style={{ marginBottom: 8, fontWeight: 700 }}>Controls</div>
+          <div className="vc-side">
+            <div className="vc-side__title">Controls</div>
             <CallControls localStreamRef={localStreamRef} />
-            {error && <div style={{ marginTop: 12, color: "#ffb3b3" }}>⚠ {error}</div>}
+            {error && <div className="vc-error">⚠ {error}</div>}
           </div>
         </div>
       </div>
@@ -449,7 +386,7 @@ function VideoCall({ me, peerId, onClose, incomingRef = null }) {
 }
 
 /* ===========================
-   Original Messages Component
+   Messages Component
    =========================== */
 
 export default function Messages() {
@@ -458,25 +395,20 @@ export default function Messages() {
   const [me, setMe] = useState(auth.currentUser?.uid || null);
   const [loading, setLoading] = useState(true);
 
-  // who we're chatting with (from /messages/:uid)
   const peerId = params.uid || null;
 
-  // left pane: all my threads
   const [threads, setThreads] = useState([]);
-  const [userCache, setUserCache] = useState({}); // uid -> {name, photo}
+  const [userCache, setUserCache] = useState({});
 
-  // main pane: messages in current thread
   const [msgs, setMsgs] = useState([]);
   const [text, setText] = useState("");
   const inputRef = useRef(null);
 
-  // Emoji toggle (safe to leave in; remove if you didn't add EmojiKeyboard yet)
   const [showEmoji, setShowEmoji] = useState(false);
 
-  // Video call states
-  const [showCall, setShowCall] = useState(false);         // open overlay
-  const [incomingCall, setIncomingCall] = useState(null);  // { ref, data, callerMeta }
-  const [answerRef, setAnswerRef] = useState(null);        // Calls doc ref for callee
+  const [showCall, setShowCall] = useState(false);
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [answerRef, setAnswerRef] = useState(null);
 
   // ensure auth
   useEffect(() => {
@@ -490,12 +422,35 @@ export default function Messages() {
     return () => unsub();
   }, [navigate]);
 
+  // ADDED: ensure my own profile is in cache (for avatar next to my messages)
+  useEffect(() => {
+    (async () => {
+      if (!me || userCache[me]) return;
+      try {
+        const us = await getDoc(doc(db, "Users", me));
+        if (us.exists()) {
+          const d = us.data();
+          const name = `${d.firstName || ""} ${d.lastName || ""}`.trim() || d.email || "Me";
+          const photo =
+            !d.photo || d.photo === "" || d.photo === FIREBASE_DEFAULT_IMAGE ? FALLBACK_IMAGE : d.photo;
+          setUserCache((p) => ({ ...p, [me]: { name, photo } }));
+        } else {
+          const photo = auth.currentUser?.photoURL || FALLBACK_IMAGE;
+          setUserCache((p) => ({ ...p, [me]: { name: "Me", photo } }));
+        }
+      } catch {
+        const photo = auth.currentUser?.photoURL || FALLBACK_IMAGE;
+        setUserCache((p) => ({ ...p, [me]: { name: "Me", photo } }));
+      }
+    })();
+  }, [me, userCache]);
+
   // subscribe to my threads (left list)
   useEffect(() => {
     if (!me) return;
-    const q = query(collection(db, "Messages"), where("userIds", "array-contains", me));
+    const qy = query(collection(db, "Messages"), where("userIds", "array-contains", me));
     const unsub = onSnapshot(
-      q,
+      qy,
       async (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         rows.sort((a, b) => {
@@ -545,9 +500,9 @@ export default function Messages() {
     }
     const tid = threadIdFor(me, peerId);
     const itemsCol = collection(db, "Messages", tid, "Items");
-    const q = query(itemsCol, orderBy("createdAt", "asc"));
+    const qy = query(itemsCol, orderBy("createdAt", "asc"));
     const unsub = onSnapshot(
-      q,
+      qy,
       (snap) => {
         const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setMsgs(list);
@@ -565,7 +520,6 @@ export default function Messages() {
   const peer = useMemo(() => userCache[peerId] || null, [userCache, peerId]);
 
   useEffect(() => {
-    // fetch peer on enter if missing
     (async () => {
       if (!peerId || userCache[peerId]) return;
       const us = await getDoc(doc(db, "Users", peerId));
@@ -638,7 +592,7 @@ export default function Messages() {
       return;
     }
     const start = el.selectionStart ?? (text?.length || 0);
-       const end = el.selectionEnd ?? (text?.length || 0);
+    const end = el.selectionEnd ?? (text?.length || 0);
     const before = (text || "").slice(0, start);
     const after = (text || "").slice(end);
     const next = before + emoji + after;
@@ -666,7 +620,6 @@ export default function Messages() {
         if (data?.calleeId !== me) return;
         if (!["ringing", "connecting"].includes(data?.status)) return;
 
-        // fetch caller profile (try cache first)
         let callerMeta = { name: "User", photo: FALLBACK_IMAGE };
         const callerId = data.callerId;
         if (callerId) {
@@ -708,13 +661,13 @@ export default function Messages() {
     setShowCall(true);
   }
 
-  // Decline incoming call (also write a small marker in the thread)
+  // Decline incoming call
   async function declineIncoming() {
     try {
       if (incomingCall?.ref) {
         await updateDoc(incomingCall.ref, { status: "declined", declinedBy: me });
 
-        const path = incomingCall.ref.path.split("/"); // ["Messages", "{tid}", "Calls", "{id}"]
+        const path = incomingCall.ref.path.split("/");
         const tid = path[1];
         const tRef = doc(db, "Messages", tid);
         await addDoc(collection(tRef, "Items"), {
@@ -730,19 +683,73 @@ export default function Messages() {
 
   const myThreads = useMemo(() => threads, [threads]);
 
+  /* ========= fancy grouping helpers ========= */
+
+  const normalized = useMemo(() => {
+    return msgs
+      .filter(Boolean)
+      .map((m) => ({
+        ...m,
+        _ts: typeof m?.createdAt?.toMillis === "function" ? m.createdAt.toMillis() : null,
+        _date: toDate(m?.createdAt),
+        _isMine: m.senderId === me,
+      }))
+      .sort((a, b) => (a._ts ?? 0) - (b._ts ?? 0));
+  }, [msgs, me]);
+
+  const startedOn = useMemo(() => {
+    if (!normalized.length) return null;
+    return formatFullDate(normalized[0]._date);
+  }, [normalized]);
+
+  const cutoffDate = useMemo(() => {
+    const d = new Date();
+    d.setHours(d.getHours() - 24);
+    return d;
+  }, []);
+
+  const { earlier, newer } = useMemo(() => {
+    const earlier = [];
+    const newer = [];
+    for (const m of normalized) {
+      (m._date < cutoffDate ? earlier : newer).push(m);
+    }
+    return { earlier, newer };
+  }, [normalized, cutoffDate]);
+
+  const groupedEarlier = useMemo(() => groupByDay(earlier), [earlier]);
+  const groupedNewer = useMemo(() => groupByDay(newer), [newer]);
+
+  const listRef = useRef(null);
+  useEffect(() => {
+    if (!listRef.current) return;
+    listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [groupedNewer.length, peerId]);
+
+  // ADDED: delete my message handler
+  async function handleDeleteMessage(message) {
+    if (!me || !peerId || !message?.id) return;
+    if (message.senderId !== me) return; // only allow deleting my own messages
+    const ok = window.confirm("Delete this message?");
+    if (!ok) return;
+    try {
+      const tid = threadIdFor(me, peerId);
+      const mRef = doc(db, "Messages", tid, "Items", message.id);
+      await deleteDoc(mRef);
+      // intentionally not touching thread.lastText/lastAt to avoid changing existing behavior
+    } catch (e) {
+      console.error("delete message error:", e);
+      alert("Could not delete the message.");
+    }
+  }
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", height: "calc(100vh - 60px)" }}>
+    <div className="msg-layout">
       {/* LEFT: Conversations list */}
-      <aside
-        style={{
-          borderRight: "1px solid #eee",
-          overflowY: "auto",
-          background: "#fafbfc",
-        }}
-      >
-        <div style={{ padding: "12px 12px 8px", fontWeight: 700 }}>Conversations</div>
+      <aside className="threads">
+        <div className="threads__title">Conversations</div>
         {myThreads.length === 0 ? (
-          <div style={{ padding: 12, color: "#666" }}>No conversations yet.</div>
+          <div className="threads__empty">No conversations yet.</div>
         ) : (
           myThreads.map((t) => {
             const other = (t.userIds || []).find((u) => u !== me);
@@ -754,64 +761,27 @@ export default function Messages() {
                 ? new Date(t.lastAt.toMillis()).toLocaleTimeString()
                 : "";
 
+            const active = other === peerId;
+
             return (
               <button
                 key={t.id}
                 onClick={() => navigate(`/messages/${other}`)}
-                style={{
-                  display: "flex",
-                  width: "100%",
-                  gap: 10,
-                  padding: "10px 12px",
-                  border: "none",
-                  background: other === peerId ? "#eef7ff" : "#fff",
-                  borderBottom: "1px solid #f1f1f1",
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
+                className={`thread ${active ? "is-active" : ""}`}
               >
                 <img
                   src={meta.photo || FALLBACK_IMAGE}
                   alt=""
-                  style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover" }}
+                  className="thread__avatar"
                 />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                    <strong
-                      style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                    >
-                      {meta.name || "User"}
-                    </strong>
-                    <small style={{ color: "#666" }}>{timeLabel}</small>
+                <div className="thread__meta">
+                  <div className="thread__top">
+                    <strong className="thread__name">{meta.name || "User"}</strong>
+                    <small className="thread__time">{timeLabel}</small>
                   </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color: "#555",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        maxWidth: 180,
-                      }}
-                    >
-                      {t.lastText || "New conversation"}
-                    </span>
-                    {!!unread && (
-                      <span
-                        style={{
-                          marginLeft: "auto",
-                          background: "red",
-                          color: "#fff",
-                          borderRadius: 999,
-                          padding: "0 6px",
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {unread}
-                      </span>
-                    )}
+                  <div className="thread__bottom">
+                    <span className="thread__preview">{t.lastText || "New conversation"}</span>
+                    {!!unread && <span className="thread__badge">{unread}</span>}
                   </div>
                 </div>
               </button>
@@ -821,30 +791,21 @@ export default function Messages() {
       </aside>
 
       {/* RIGHT: Chat area */}
-      <main style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      <main className="chat">
         {/* Header with peer info */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "10px 14px",
-            borderBottom: "1px solid #eee",
-            background: "#fff",
-          }}
-        >
+        <div className="chat__header">
           <img
             src={peer?.photo || FALLBACK_IMAGE}
             alt=""
-            style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }}
+            className="chat__avatar"
           />
-          <div>
-            <div style={{ fontWeight: 700 }}>{peer?.name || "Select a conversation"}</div>
-            {peerId && <small style={{ color: "#666" }}>Chat with {peer?.name || peerId}</small>}
+          <div className="chat__titles">
+            <div className="chat__name">{peer?.name || "Select a conversation"}</div>
+            {peerId && <small className="chat__subtitle">Chat with {peer?.name || peerId}</small>}
           </div>
 
-          {/* Call button */}
-          <div style={{ marginLeft: "auto" }}>
+        {/* Call button */}
+          <div className="chat__actions">
             {peerId && (
               <button
                 type="button"
@@ -853,15 +814,7 @@ export default function Messages() {
                   setShowCall(true);
                 }}
                 title="Start video call"
-                style={{
-                  border: "none",
-                  background: "#27D496",
-                  color: "#052023",
-                  borderRadius: 8,
-                  padding: "6px 10px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
+                className="btn btn--brand"
               >
                 📹 Call
               </button>
@@ -869,62 +822,73 @@ export default function Messages() {
           </div>
         </div>
 
-        {/* Messages list */}
-        <div style={{ flex: 1, overflowY: "auto", padding: 16, background: "#f7f9fb" }}>
-          {loading ? (
-            <div style={{ color: "#666" }}>Loading…</div>
-          ) : msgs.length === 0 ? (
-            <div style={{ color: "#666" }}>No messages yet. Say hello 👋</div>
+        {/* Conversation start banner */}
+        <div className="chat__banner">
+          {startedOn ? (
+            <div className="banner__pill">
+              Conversation started on <strong>{startedOn}</strong>
+            </div>
           ) : (
-            msgs.map((m) => {
-              const mine = m.senderId === me;
-              return (
-                <div
-                  key={m.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: mine ? "flex-end" : "flex-start",
-                    marginBottom: 8,
-                  }}
-                >
-                  <div
-                    style={{
-                      maxWidth: "70%",
-                      background: mine ? "#27D496" : "#fff",
-                      color: mine ? "#052023" : "#111",
-                      padding: "8px 12px",
-                      borderRadius: 10,
-                      boxShadow: "0 2px 6px rgba(0,0,0,.08)",
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {m.text}
-                    <div style={{ textAlign: "right", marginTop: 4 }}>
-                      <small style={{ opacity: 0.7 }}>
-                        {typeof m?.createdAt?.toMillis === "function"
-                          ? new Date(m.createdAt.toMillis()).toLocaleTimeString()
-                          : ""}
-                      </small>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
+            <div className="banner__pill">No messages yet</div>
+          )}
+        </div>
+
+        {/* Messages list */}
+        <div className="chat__list" ref={listRef} role="log" aria-live="polite">
+          {loading ? (
+            <div className="chat__empty">Loading…</div>
+          ) : normalized.length === 0 ? (
+            <div className="chat__empty">No messages yet. Say hello 👋</div>
+          ) : (
+            <>
+              {/* Earlier section */}
+              {groupedEarlier.length > 0 && (
+                <>
+                  <Divider label="Earlier" />
+                  {groupedEarlier.map((g) => (
+                    <DayGroup
+                      key={`earlier-${g.dayKey}`}
+                      label={g.label}
+                      items={g.items}
+                      me={me}
+                      userCache={userCache}           // <-- ADDED
+                      onDelete={handleDeleteMessage}   // <-- ADDED
+                    />
+                  ))}
+                </>
+              )}
+
+              {/* Newer section */}
+              {groupedNewer.length > 0 && (
+                <>
+                  {groupedEarlier.length > 0 && <Divider label="Newer" tone="brand" />}
+                  {groupedNewer.map((g) => (
+                    <DayGroup
+                      key={`newer-${g.dayKey}`}
+                      label={g.label}
+                      items={g.items}
+                      me={me}
+                      userCache={userCache}           // <-- ADDED
+                      onDelete={handleDeleteMessage}   // <-- ADDED
+                    />
+                  ))}
+                </>
+              )}
+            </>
           )}
           <div id="msg-end" />
         </div>
 
         {/* Composer */}
         {peerId ? (
-          <div style={{ padding: 12, borderTop: "1px solid #eee", background: "#fff", position: "relative" }}>
-            <div style={{ display: "flex", gap: 8, position: "relative" }}>
+          <div className="composer">
+            <div className="composer__row">
               <input
                 ref={inputRef}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 placeholder="Write a message…"
-                style={{ flex: 1, padding: "10px 12px", borderRadius: 8, border: "1px solid #ddd" }}
+                className="composer__input"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -933,41 +897,22 @@ export default function Messages() {
                 }}
               />
 
-              {/* Emoji toggle (safe to keep; remove if you didn't add EmojiKeyboard.jsx) */}
+              {/* Emoji toggle */}
               <button
                 type="button"
                 onClick={() => setShowEmoji((v) => !v)}
                 title="Emoji"
-                style={{
-                  border: "1px solid #ddd",
-                  background: "#fff",
-                  borderRadius: 8,
-                  padding: "0 10px",
-                  fontSize: 18,
-                  cursor: "pointer",
-                }}
+                className="btn btn--ghost"
               >
                 😊
               </button>
 
-              <button
-                type="button"
-                onClick={send}
-                style={{
-                  border: "none",
-                  background: "#27D496",
-                  color: "#052023",
-                  borderRadius: 8,
-                  padding: "8px 14px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
+              <button type="button" onClick={send} className="btn btn--brand">
                 Send
               </button>
 
               {showEmoji && (
-                <div style={{ position: "absolute", right: 110, bottom: 46 }}>
+                <div className="emoji-pop">
                   <EmojiKeyboard
                     onPick={(emoji) => {
                       insertAtCursor(emoji);
@@ -982,70 +927,26 @@ export default function Messages() {
             </div>
           </div>
         ) : (
-          <div style={{ padding: 16, color: "#666" }}>Pick a conversation from the left.</div>
+          <div className="chat__hint">Pick a conversation from the left.</div>
         )}
       </main>
 
       {/* Incoming call banner (global) */}
       {incomingCall && (
-        <div
-          style={{
-            position: "fixed",
-            right: 16,
-            bottom: 16,
-            background: "#0b1220",
-            color: "#cde3ff",
-            border: "1px solid #1f2a44",
-            borderRadius: 12,
-            boxShadow: "0 10px 30px rgba(0,0,0,.25)",
-            padding: 12,
-            display: "flex",
-            gap: 10,
-            alignItems: "center",
-            zIndex: 10000,
-            maxWidth: 360,
-          }}
-        >
+        <div className="incoming">
           <img
             src={incomingCall.callerMeta?.photo || FALLBACK_IMAGE}
             alt=""
-            style={{ width: 42, height: 42, borderRadius: "50%", objectFit: "cover" }}
+            className="incoming__avatar"
           />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          <div className="incoming__meta">
+            <div className="incoming__name">
               {incomingCall.callerMeta?.name || "Incoming call"}
             </div>
-            <small style={{ opacity: 0.8 }}>is calling you…</small>
+            <small className="incoming__sub">is calling you…</small>
           </div>
-          <button
-            onClick={acceptIncoming}
-            style={{
-              border: "none",
-              background: "#27D496",
-              color: "#052023",
-              borderRadius: 8,
-              padding: "8px 10px",
-              fontWeight: 700,
-              cursor: "pointer",
-              marginRight: 6,
-            }}
-          >
-            Accept
-          </button>
-          <button
-            onClick={declineIncoming}
-            style={{
-              border: "none",
-              background: "#ff4d4f",
-              color: "#fff",
-              borderRadius: 8,
-              padding: "8px 10px",
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Decline
-          </button>
+          <button onClick={acceptIncoming} className="btn btn--brand">Accept</button>
+          <button onClick={declineIncoming} className="btn btn--danger">Decline</button>
         </div>
       )}
 
@@ -1063,4 +964,182 @@ export default function Messages() {
       )}
     </div>
   );
+}
+
+/* ========= Subcomponents for messages ========= */
+
+function Divider({ label, tone = "muted" }) {
+  return (
+    <div className={`divider divider--${tone}`}>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function DayGroup({ label, items, me, userCache, onDelete }) { // <-- ADDED props
+  return (
+    <section className="day-group" aria-label={label}>
+      <div className="day-group__chip">{label}</div>
+      <ul className="day-group__list">
+        {renderClusters(items, me, userCache, onDelete)} {/* <-- ADDED */}
+      </ul>
+    </section>
+  );
+}
+
+function renderClusters(items, me, userCache, onDelete) { // <-- ADDED params
+  const clusters = [];
+  let current = null;
+
+  for (const m of items) {
+    const mine = m.senderId === me;
+    if (!current || current.mine !== mine) {
+      if (current) clusters.push(current);
+      current = { mine, msgs: [m] };
+    } else {
+      current.msgs.push(m);
+    }
+  }
+  if (current) clusters.push(current);
+
+  return clusters.map((cluster, idx) => (
+    <li key={`cluster-${idx}`} className={`msg-cluster ${cluster.mine ? "is-mine" : "is-theirs"}`}>
+      <div className="msg-cluster__bubbles">
+        {cluster.msgs.map((m, i) => {
+  const senderMeta = userCache[m.senderId] || { photo: FALLBACK_IMAGE };
+  return (
+    <div key={m.id} className={`bubble-row ${cluster.mine ? "is-mine" : "is-theirs"}`}>
+      {/* Avatar always on the left of the bubble */}
+      <img src={senderMeta.photo || FALLBACK_IMAGE} alt="" className="bubble__avatar" />
+
+      <Bubble
+        text={m.text}
+        isMine={cluster.mine}
+        isFirst={i === 0}
+        isLast={i === cluster.msgs.length - 1}
+        time={formatTime(m._date)}
+        onDelete={cluster.mine ? () => onDelete?.(m) : undefined}
+      />
+    </div>
+  );
+})}
+
+      </div>
+    </li>
+  ));
+}
+
+function Bubble({ text, isMine, isFirst, isLast, time, onDelete }) {
+  const [showMenu, setShowMenu] = useState(false);
+
+  return (
+    <div
+      className={[
+        "bubble",
+        isMine ? "bubble--mine" : "bubble--theirs",
+        isFirst && "bubble--first",
+        isLast && "bubble--last",
+      ].filter(Boolean).join(" ")}
+    >
+      <p className="bubble__text">{text}</p>
+      <time className="bubble__time" dateTime={time.iso}>
+        {time.short}
+      </time>
+
+      {isMine && (
+        <div className="bubble__actions">
+          <button
+            type="button"
+            className="bubble__menu-btn"
+            onClick={() => setShowMenu((v) => !v)}
+            aria-label="Message options"
+          >
+            ⋯
+          </button>
+
+          {showMenu && (
+            <div className="bubble__menu">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMenu(false);
+                  onDelete?.();
+                }}
+              >
+                🗑 Delete
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+/* ========= Utilities ========= */
+
+function toDate(tsOrDate) {
+  if (!tsOrDate) return new Date();
+  if (typeof tsOrDate?.toMillis === "function") return new Date(tsOrDate.toMillis());
+  if (tsOrDate instanceof Date) return tsOrDate;
+  if (typeof tsOrDate === "number") return new Date(tsOrDate);
+  if (typeof tsOrDate === "string") return new Date(tsOrDate);
+  return new Date();
+}
+
+function formatTime(d) {
+  const dt = new Date(d);
+  return {
+    short: dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+    iso: dt.toISOString(),
+  };
+}
+
+function sameDay(a, b) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function formatDayLabel(d) {
+  const today = new Date();
+  const yday = new Date();
+  today.setHours(0, 0, 0, 0);
+  yday.setHours(0, 0, 0, 0);
+  yday.setDate(today.getDate() - 1);
+
+  const X = new Date(d);
+  if (sameDay(X, today)) return "Today";
+  if (sameDay(X, yday)) return "Yesterday";
+  return X.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function formatFullDate(d) {
+  const X = new Date(d);
+  return X.toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function keyForDay(d) {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${x.getMonth() + 1}-${x.getDate()}`;
+}
+
+function groupByDay(items) {
+  const map = new Map();
+  for (const m of items) {
+    const k = keyForDay(m._date);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(m);
+  }
+  return [...map.entries()].map(([dayKey, arr]) => ({
+    dayKey,
+    label: formatDayLabel(arr[0]._date),
+    items: arr,
+  }));
 }
